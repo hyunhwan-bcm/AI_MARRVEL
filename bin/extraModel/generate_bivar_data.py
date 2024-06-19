@@ -81,6 +81,7 @@ def process_sample(data_folder, sample_id, default_pred, labeling=False):
         bivar_feature_mats.append(df)
     if bivar_feature_mats:
         bivar_feature_mats = pd.concat(bivar_feature_mats)
+        bivar_feature_mats = bivar_feature_mats[~bivar_feature_mats.index.duplicated()]
         bivar_feature_mats.to_csv(f"{recessive_folder}/{sample_id}.csv")
         print("Recessive features saved, now removing tmp files...")
         print("Recessive features generation finished...")
@@ -153,8 +154,8 @@ def process_gene(param):
                         is_causal_wo_OMIM = 0
                     varii_feature_matrix["is_causal"] = is_causal_wo_OMIM
 
-                bivar_feature_mats.append(varii_feature_matrix)
-                seen_pairs.add(f"{var1}_{var1}")
+            bivar_feature_mats.append(varii_feature_matrix)
+            seen_pairs.add(f"{var1}_{var1}")
 
         if i < len(varIDs) - 1:
             for j in range(i + 1, len(varIDs)):
@@ -184,7 +185,6 @@ def process_gene(param):
 
     if len(bivar_feature_mats) > 0:
         bivar_feature_mats = pd.concat(bivar_feature_mats, axis=0)
-        bivar_feature_mats = bivar_feature_mats[~bivar_feature_mats.index.duplicated()]
         bivar_feature_mats.to_csv(f"{out_folder}/{gene}.csv")
 
     return

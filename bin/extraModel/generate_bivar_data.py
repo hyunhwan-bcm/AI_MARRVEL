@@ -50,7 +50,6 @@ def process_sample(data_folder, sample_id, default_pred, labeling=False):
         .reset_index() \
         .sort_values(['geneEnsId', 'varId']) \
         .drop_duplicates()
-    geneEnsId_varId_df.groupby('geneEnsId').value_counts()
 
     # Generate variant pairs for each gene
     gene_var_pairs = []

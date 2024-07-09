@@ -10,11 +10,11 @@ test_ref/
 test_output/
 
 # Nextflow Related
-nextflow.config
 .nextflow*
 .nextflow/
 work/
 out/
 trace*
-report-*html
 trace-*txt
+report-*html
+params.yaml

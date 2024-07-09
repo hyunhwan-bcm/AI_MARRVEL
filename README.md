@@ -56,7 +56,7 @@ nextflow run .  --ref_dir <PATH_TO_REFERENCE_DIRECTORY>
                 --ref_ver [Reference genome: hg19/hg38] # Optional, default: hg19
 ```
 
-#### Alternatively, the pipeline can be executed with a parameter file (yaml)
+Alternatively, the pipeline can be executed with a parameter file (yaml)
 ```
 nextflow run . -params-file params.yaml
 ```

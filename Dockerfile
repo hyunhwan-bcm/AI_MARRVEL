@@ -79,10 +79,6 @@ RUN tar -xf /opt/bcftools-1.9.tar.bz2 -C /opt/ && \
   make install && \
   rm -rf /opt/bcftools-1.9
 
-# Copy the pipeline into Docker image
-COPY run /run/
-RUN chmod +x /run/proc.sh
-
 # Install bedtools
 RUN wget https://github.com/arq5x/bedtools2/releases/download/v2.30.0/bedtools.static.binary
 RUN mv bedtools.static.binary /run/bedtools

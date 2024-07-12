@@ -219,6 +219,7 @@ process FILTER_PROBAND {
 }
 
 process NORMALIZE_NETWORK {
+    memory { 16.GB * task.attempt }
     input:
     path ref_mod5_diffusion_dir
 
@@ -232,6 +233,7 @@ process NORMALIZE_NETWORK {
 }
 
 process VEP_ANNOTATE {
+    memory { 128.GB * task.attempt }
     publishDir "${params.outdir}/vep/", mode: "copy"
 
     input:
@@ -272,6 +274,7 @@ process VEP_ANNOTATE {
 }
 
 process FEATURE_ENGINEERING_PART1 {
+    memory { 128.GB * task.attempt }
     input:
     path vep
     path hgmd_sim
@@ -318,6 +321,7 @@ process FEATURE_ENGINEERING_PART1 {
 }
 
 process FEATURE_ENGINEERING_PART2 {
+    memory { 128.GB * task.attempt }
     input:
     path scores, stageAs: "scores.csv"
     path phrank
@@ -339,6 +343,7 @@ process FEATURE_ENGINEERING_PART2 {
 }
 
 process PREDICTION {
+    memory { 128.GB * task.attempt }
     publishDir "${params.outdir}/prediction/", mode: "copy"
 
     input:

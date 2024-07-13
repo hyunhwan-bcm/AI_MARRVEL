@@ -218,22 +218,7 @@ process FILTER_PROBAND {
 
 }
 
-process NORMALIZE_NETWORK {
-    memory { 16.GB * task.attempt }
-    input:
-    path ref_mod5_diffusion_dir
-
-    output:
-    path "net_norm.npz"
-
-    script:
-    """
-    normalize_network.py
-    """
-}
-
 process VEP_ANNOTATE {
-    memory { 128.GB * task.attempt }
     publishDir "${params.outdir}/vep/", mode: "copy"
 
     input:
@@ -274,7 +259,6 @@ process VEP_ANNOTATE {
 }
 
 process FEATURE_ENGINEERING_PART1 {
-    memory { 128.GB * task.attempt }
     input:
     path vep
     path hgmd_sim
@@ -321,11 +305,9 @@ process FEATURE_ENGINEERING_PART1 {
 }
 
 process FEATURE_ENGINEERING_PART2 {
-    memory { 128.GB * task.attempt }
     input:
     path scores, stageAs: "scores.csv"
     path phrank
-    path net_norm
     path ref_annot_dir
     path ref_var_tier_dir
     path ref_merge_expand_dir
@@ -343,7 +325,6 @@ process FEATURE_ENGINEERING_PART2 {
 }
 
 process PREDICTION {
-    memory { 128.GB * task.attempt }
     publishDir "${params.outdir}/prediction/", mode: "copy"
 
     input:
@@ -402,10 +383,6 @@ workflow {
         params.ref_gnomad_exome_idx
     )
 
-    NORMALIZE_NETWORK(
-        params.ref_mod5_diffusion_dir
-    )
-
     VEP_ANNOTATE(
         FILTER_PROBAND.out,
         params.vep_dir_cache,
@@ -431,7 +408,6 @@ workflow {
     FEATURE_ENGINEERING_PART2 (
         FEATURE_ENGINEERING_PART1.out[0],
         PHRANK_SCORING.out,
-        NORMALIZE_NETWORK.out,
         file(params.ref_annot_dir),
         file(params.ref_var_tier_dir),
         file(params.ref_merge_expand_dir),

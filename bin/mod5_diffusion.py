@@ -52,12 +52,10 @@ def diffuseSample(ID, Anno_df, Phrank_folder):
         columnns contatins diffused phrank scores normalized as percentile.
     """
 
-    ## Get the PPI network for diffusion
-    cor_path = "mod5_diffusion/combined_score.hdf5"
-    cor_df = pd.read_hdf(cor_path, mode="r")
-    cor_df = cor_df[(cor_df.T != 0).sum() > 1]
-    cor_df = cor_df.loc[cor_df.index, cor_df.index]
-    cor_GeneID = pd.DataFrame({"ID": cor_df.columns.tolist()})
+    ## Load PPI Network for Diffusion
+    net_norm_cor_GeneID = np.load('./mod5_diffusion/net_norm_cor_GeneID.npz', allow_pickle=True)
+    net_norm = net_norm_cor_GeneID['net_norm']
+    cor_GeneID = pd.DataFrame(net_norm_cor_GeneID['cor_GeneID_arr'], columns=["ID"])
 
     # Phrank_path = Phrank_folder + ID.split('.')[0] + ".txt"
     Phrank_path = ID + ".phrank.txt"
@@ -105,8 +103,6 @@ def diffuseSample(ID, Anno_df, Phrank_folder):
     Y = Y[["ID", "Similarity_Score"]].fillna(0)
     Y.set_index("ID", inplace=True)
 
-    ## Load Normalized Network
-    net_norm = np.load('net_norm.npz')['arr_0']
 
     ## Start diffusion
     diff_res = diffusion(net_norm, Y, 0.5, 100)

@@ -103,7 +103,6 @@ def diffuseSample(ID, Anno_df, Phrank_folder):
     Y = Y[["ID", "Similarity_Score"]].fillna(0)
     Y.set_index("ID", inplace=True)
 
-
     ## Start diffusion
     diff_res = diffusion(net_norm, Y, 0.5, 100)
 

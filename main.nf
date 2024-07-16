@@ -50,8 +50,9 @@ process FILTER_EXONIC {
 
     script:
     """
-    if [ !${params.no_filter_exonic} ]; then
-        bcftools filter --regions-file ${ref_exonic_filter_bed} ${vcf} -Oz -o "${params.run_id}.recode.vcf.gz"
+    if [ ${params.no_filter_exonic} == false ]; then
+        awk '{gsub(/^chr/, ""); print}' ${ref_exonic_filter_bed} > bed
+        bcftools filter --regions-file bed ${vcf} -Oz -o "${params.run_id}.recode.vcf.gz"
         tabix -p vcf "${params.run_id}.recode.vcf.gz"
     else
         cp ${vcf} "${params.run_id}.recode.vcf.gz"

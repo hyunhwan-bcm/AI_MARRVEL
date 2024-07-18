@@ -38,6 +38,29 @@ process INDEX_VCF {
     """
 }
 
+process FILTER_EXONIC {
+    input:
+    path vcf
+    path tbi
+    path ref_exonic_filter_bed
+
+    output:
+    path "${params.run_id}.recode.vcf.gz"
+    path "${params.run_id}.recode.vcf.gz.tbi"
+
+    script:
+    """
+    if [ ${params.no_filter_exonic} == false ]; then
+        awk '{gsub(/^chr/, ""); print}' ${ref_exonic_filter_bed} > bed
+        bcftools filter --regions-file bed ${vcf} -Oz -o "${params.run_id}.recode.vcf.gz"
+        tabix -p vcf "${params.run_id}.recode.vcf.gz"
+    else
+        cp ${vcf} "${params.run_id}.recode.vcf.gz"
+        cp ${tbi} "${params.run_id}.recode.vcf.gz.tbi"
+    fi
+    """
+}
+
 process VCF_PRE_PROCESS {
     input:
     path vcf
@@ -350,17 +373,11 @@ process PREDICTION {
 
 workflow { 
     INDEX_VCF(params.input_vcf)
-
     VCF_PRE_PROCESS(INDEX_VCF.out, params.chrmap)
 
-    REMOVE_MITO_AND_UNKOWN_CHR(VCF_PRE_PROCESS.out)
-
     ANNOT_PHRANK(VCF_PRE_PROCESS.out)
-
     ANNOT_ENSMBLE(ANNOT_PHRANK.out, params.ref_loc)
-
     TO_GENE_SYM(ANNOT_ENSMBLE.out, params.ref_to_sym, params.ref_sorted_sym)
-
     PHRANK_SCORING( TO_GENE_SYM.out, 
                     params.input_hpo, 
                     params.phrank_dagfile,
@@ -374,15 +391,16 @@ workflow {
             params.omim_genemap2,
             params.omim_pheno)
 
+    REMOVE_MITO_AND_UNKOWN_CHR(VCF_PRE_PROCESS.out)
+    FILTER_EXONIC(REMOVE_MITO_AND_UNKOWN_CHR.out, params.ref_exonic_filter_bed)
     FILTER_PROBAND(
-        REMOVE_MITO_AND_UNKOWN_CHR.out[0],
-        REMOVE_MITO_AND_UNKOWN_CHR.out[1],
+        FILTER_EXONIC.out[0],
+        FILTER_EXONIC.out[1],
         params.ref_gnomad_genome,
         params.ref_gnomad_genome_idx,
         params.ref_gnomad_exome,
         params.ref_gnomad_exome_idx
     )
-
     VEP_ANNOTATE(
         FILTER_PROBAND.out,
         params.vep_dir_cache,

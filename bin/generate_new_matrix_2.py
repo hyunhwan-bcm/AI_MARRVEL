@@ -18,7 +18,11 @@ from simple_repeat_anno import simple_repeat_anno
 score = pd.read_csv("scores.csv")
 
 ### add more clin and hgmd features ###
+print(sys.argv[2])
 merged = add_c_nc(score, sys.argv[2])
+
+## SAVE merged
+merged.to_csv("merged1.txt.gz", compression="gzip", sep="\t")
 
 path_phrank = sys.argv[1] + ".phrank.txt"
 ### run diffusion module 5 ###
@@ -27,6 +31,9 @@ if os.path.getsize(path_phrank) == 0:
 else:
     phrank_empty = False
     mod5 = diffuseSample(sys.argv[1], merged, ".")
+
+## SAVE merged
+merged.to_csv("merged2.txt.gz", compression="gzip", sep="\t")
 
 ### get original coordinates ###
 merged["varId"] = merged["varId"].apply(lambda x: x.split("_E")[0])
@@ -40,6 +47,9 @@ if phrank_empty:
 else:
     phr = pd.read_csv(path_phrank, sep="\t", names=["ENSG", "phrank"])
     merged = merged.merge(phr, left_on="geneEnsId", right_on="ENSG", how="left")
+
+## SAVE merged
+merged.to_csv("merged3.txt.gz", compression="gzip", sep="\t")
 
 ### save intermediate file for merging ###
 merged.to_csv("scores.txt.gz", compression="gzip", sep="\t")

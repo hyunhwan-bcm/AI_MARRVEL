@@ -118,13 +118,14 @@ process REMOVE_MITO_AND_UNKOWN_CHR {
 process ANNOT_PHRANK {
     input:
     path vcf
+    path tbi
 
     output:
     path "${params.run_id}-var-filt.txt"
 
     script:
     """
-    zcat $vcf | awk 'substr(\$0, 1, 1) != "#"' | cut -f1,2,4,5 | sed 's/\t/:/g' > ${params.run_id}-var.txt
+    zcat $vcf | awk 'substr(\$0, 1, 1) != "#"' | cut -f1,2,4,5 | sed 's/\\t/:/g' > ${params.run_id}-var.txt
     cat ${params.run_id}-var.txt | sed 's/chr//g' | sort -u > ${params.run_id}-var-filt.txt
     """
 }
@@ -371,11 +372,10 @@ process PREDICTION {
 }
 
 
-workflow { 
+workflow {
     INDEX_VCF(params.input_vcf)
-    VCF_PRE_PROCESS(INDEX_VCF.out, params.chrmap)
 
-    ANNOT_PHRANK(VCF_PRE_PROCESS.out)
+    ANNOT_PHRANK(INDEX_VCF.out)
     ANNOT_ENSMBLE(ANNOT_PHRANK.out, params.ref_loc)
     TO_GENE_SYM(ANNOT_ENSMBLE.out, params.ref_to_sym, params.ref_sorted_sym)
     PHRANK_SCORING( TO_GENE_SYM.out, 
@@ -385,12 +385,7 @@ workflow {
                     params.phrank_gene_annotation,
                     params.phrank_disease_gene)
 
-    HPO_SIM(params.input_hpo,
-            params.omim_hgmd_phen,
-            params.omim_obo,
-            params.omim_genemap2,
-            params.omim_pheno)
-
+    VCF_PRE_PROCESS(INDEX_VCF.out, params.chrmap)
     REMOVE_MITO_AND_UNKOWN_CHR(VCF_PRE_PROCESS.out)
     FILTER_EXONIC(REMOVE_MITO_AND_UNKOWN_CHR.out, params.ref_exonic_filter_bed)
     FILTER_PROBAND(
@@ -415,6 +410,12 @@ workflow {
         params.vep_plugin_dbnsfp,
         file(params.vep_idx)
     )
+
+    HPO_SIM(params.input_hpo,
+            params.omim_hgmd_phen,
+            params.omim_obo,
+            params.omim_genemap2,
+            params.omim_pheno)
 
     FEATURE_ENGINEERING_PART1 ( // will rename it once we have analyzed/review the part
         VEP_ANNOTATE.out,

@@ -8,11 +8,13 @@ def add_c_nc(score, ref):
 
     # read data files
     if ref == "hg38":
+        print('hg38!')
         clin_c = pd.read_csv("merge_expand/hg38/clin_c.tsv.gz", sep="\t")
         clin_nc = pd.read_csv("merge_expand/hg38/clin_nc.tsv.gz", sep="\t")
         hgmd_nc = pd.read_csv("merge_expand/hg38/hgmd_nc.tsv.gz", sep="\t")
         hgmd_c = pd.read_csv("merge_expand/hg38/hgmd_c.tsv.gz", sep="\t")
     else:
+        print('hg19!')
         clin_c = pd.read_csv("merge_expand/hg19/clin_c.tsv.gz", sep="\t")
         clin_nc = pd.read_csv("merge_expand/hg19/clin_nc.tsv.gz", sep="\t")
         hgmd_nc = pd.read_csv("merge_expand/hg19/hgmd_nc.tsv.gz", sep="\t")

@@ -110,7 +110,7 @@ def process_gene(param):
     seen_pairs = set() 
     
     allVars = feature_df.index.tolist()
-    varIDs = [v for v in varIDs if v in allVars]
+    varIDs = sorted([v for v in varIDs if v in allVars])
 
     if len(varIDs) == 0:
         return

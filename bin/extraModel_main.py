@@ -57,8 +57,7 @@ def assign_ranking(df):
     return pred_df
 
 
-# def AIM(data_folder, sample_id):
-def AIM(data_folder, sample_id, n_thread):
+def AIM(data_folder, sample_id):
     feature_fn = f"{sample_id}.csv"
 
     if not os.path.exists(feature_fn):
@@ -90,8 +89,7 @@ def AIM(data_folder, sample_id, n_thread):
         data_folder=out_folder,
         sample_id=sample_id,
         default_pred=default_pred,
-        #labeling=False,
-        n_thread = n_thread
+        labeling=False,
     )
 
     recessive_feature_file = f"{out_folder}/recessive_matrix/{sample_id}.csv"
@@ -124,5 +122,4 @@ def AIM(data_folder, sample_id, n_thread):
 
 
 # for sample_id in tqdm(sample_folders):
-#AIM(out_folder, sample_id)
-AIM(out_folder, sample_id, n_thread = 10)
+AIM(out_folder, sample_id)

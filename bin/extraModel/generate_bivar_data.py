@@ -116,7 +116,7 @@ def process_gene(param):
 
     if len(varIDs) > 6:
         defaultPred = param["default_pred"].copy()
-        defaultPred = defaultPred.loc[varIDs, :].sort_values("predict", ascending=False)
+        defaultPred = defaultPred.loc[varIDs, :].sort_values(["predict", "IMPACT.from.Tier"], ascending=[False, False], kind="stable") 
         varIDs = defaultPred.index.tolist()[:6]
 
     gene_feats = feature_df.loc[varIDs, feature_names].copy()

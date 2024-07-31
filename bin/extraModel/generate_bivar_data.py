@@ -95,19 +95,20 @@ def process_sample(data_folder, sample_id, default_pred, labeling=False, n_threa
 
 
 def process_gene(param):
-
-    feature_names = "diffuse_Phrank_STRING,hgmdSymptomScore,omimSymMatchFlag,hgmdSymMatchFlag,clinVarSymMatchFlag,omimGeneFound,omimVarFound,hgmdGeneFound,hgmdVarFound,clinVarVarFound,clinVarGeneFound,clinvarNumP,clinvarNumLP,clinvarNumLB,clinvarNumB,dgvVarFound,decipherVarFound,curationScoreHGMD,curationScoreOMIM,curationScoreClinVar,conservationScoreDGV,omimSymptomSimScore,hgmdSymptomSimScore,GERPpp_RS,gnomadAF,gnomadAFg,LRT_score,LRT_Omega,phyloP100way_vertebrate,gnomadGeneZscore,gnomadGenePLI,gnomadGeneOELof,gnomadGeneOELofUpper,IMPACT,CADD_phred,CADD_PHRED,DANN_score,REVEL_score,fathmm_MKL_coding_score,conservationScoreGnomad,conservationScoreOELof,Polyphen2_HDIV_score,Polyphen2_HVAR_score,SIFT_score,zyg,FATHMM_score,M_CAP_score,MutationAssessor_score,ESP6500_AA_AF,ESP6500_EA_AF,hom,hgmd_rs,spliceAImax,nc_ClinVar_Exp,nc_HGMD_Exp,nc_isPLP,nc_isBLB,c_isPLP,c_isBLB,nc_CLNREVSTAT,c_CLNREVSTAT,nc_RANKSCORE,c_RANKSCORE,CLASS,phrank,isB/LB,isP/LP,cons_transcript_ablation,cons_splice_acceptor_variant,cons_splice_donor_variant,cons_stop_gained,cons_frameshift_variant,cons_stop_lost,cons_start_lost,cons_transcript_amplification,cons_inframe_insertion,cons_inframe_deletion,cons_missense_variant,cons_protein_altering_variant,cons_splice_region_variant,cons_splice_donor_5th_base_variant,cons_splice_donor_region_variant,c_ClinVar_Exp_Del_to_Missense,c_ClinVar_Exp_Different_pChange,c_ClinVar_Exp_Same_pChange,c_HGMD_Exp_Del_to_Missense,c_HGMD_Exp_Different_pChange,c_HGMD_Exp_Same_pChange,c_HGMD_Exp_Stop_Loss,c_HGMD_Exp_Start_Loss,IMPACT.from.Tier,TierAD,TierAR,TierAR.adj,No.Var.HM,No.Var.H,No.Var.M,No.Var.L,AD.matched,AR.matched,recessive,dominant,simple_repeat"
+    
+    feature_names = 'diffuse_Phrank_STRING,hgmdSymptomScore,omimSymMatchFlag,hgmdSymMatchFlag,clinVarSymMatchFlag,omimGeneFound,omimVarFound,hgmdGeneFound,hgmdVarFound,clinVarVarFound,clinVarGeneFound,clinvarNumP,clinvarNumLP,clinvarNumLB,clinvarNumB,dgvVarFound,decipherVarFound,curationScoreHGMD,curationScoreOMIM,curationScoreClinVar,conservationScoreDGV,omimSymptomSimScore,hgmdSymptomSimScore,GERPpp_RS,gnomadAF,gnomadAFg,LRT_score,LRT_Omega,phyloP100way_vertebrate,gnomadGeneZscore,gnomadGenePLI,gnomadGeneOELof,gnomadGeneOELofUpper,IMPACT,CADD_phred,CADD_PHRED,DANN_score,REVEL_score,fathmm_MKL_coding_score,conservationScoreGnomad,conservationScoreOELof,Polyphen2_HDIV_score,Polyphen2_HVAR_score,SIFT_score,zyg,FATHMM_score,M_CAP_score,MutationAssessor_score,ESP6500_AA_AF,ESP6500_EA_AF,hom,hgmd_rs,spliceAImax,nc_ClinVar_Exp,nc_HGMD_Exp,nc_isPLP,nc_isBLB,c_isPLP,c_isBLB,nc_CLNREVSTAT,c_CLNREVSTAT,nc_RANKSCORE,c_RANKSCORE,CLASS,phrank,isB/LB,isP/LP,cons_transcript_ablation,cons_splice_acceptor_variant,cons_splice_donor_variant,cons_stop_gained,cons_frameshift_variant,cons_stop_lost,cons_start_lost,cons_transcript_amplification,cons_inframe_insertion,cons_inframe_deletion,cons_missense_variant,cons_protein_altering_variant,cons_splice_region_variant,cons_splice_donor_5th_base_variant,cons_splice_donor_region_variant,c_ClinVar_Exp_Del_to_Missense,c_ClinVar_Exp_Different_pChange,c_ClinVar_Exp_Same_pChange,c_HGMD_Exp_Del_to_Missense,c_HGMD_Exp_Different_pChange,c_HGMD_Exp_Same_pChange,c_HGMD_Exp_Stop_Loss,c_HGMD_Exp_Start_Loss,IMPACT.from.Tier,TierAD,TierAR,TierAR.adj,No.Var.HM,No.Var.H,No.Var.M,No.Var.L,AD.matched,AR.matched,recessive,dominant,simple_repeat'
     feature_names = feature_names.split(",")
     nFeatures = len(feature_names)
     bivar_feature_mats = []
 
-    gene = param["gene"]
-    varIDs, labeling = param["varIDs"], param["labeling"]
+    gene = param['gene']
+    varIDs, labeling = param['varIDs'], param['labeling']
 
-    feature_df, out_folder = param["feature_df"], param["out_folder"]
+    
+    feature_df, out_folder = param['feature_df'], param['out_folder']
 
-    seen_pairs = set()
-
+    seen_pairs = set() 
+    
     allVars = feature_df.index.tolist()
     varIDs = [v for v in varIDs if v in allVars]
 
@@ -115,8 +116,8 @@ def process_gene(param):
         return
 
     if len(varIDs) > 6:
-        defaultPred = param["default_pred"].copy()
-        defaultPred = defaultPred.loc[varIDs, :].sort_values(["predict", "IMPACT.from.Tier"], ascending=[False, False], kind="stable") 
+        defaultPred = param['default_pred'].copy()
+        defaultPred = defaultPred.loc[varIDs,:].sort_values(["predict", "IMPACT.from.Tier"], ascending=[False, False], kind="stable") 
         varIDs = defaultPred.index.tolist()[:6]
 
     gene_feats = feature_df.loc[varIDs, feature_names].copy()
@@ -126,66 +127,60 @@ def process_gene(param):
 
     def generate_feature_vector(i, j):
         fmat = np.zeros((2, nFeatures * 2 + 1))
-        dist = np.absolute(int(varIDs[i].split("-")[1]) - int(varIDs[j].split("-")[1]))
-
+        dist = np.absolute(int(varIDs[i].split("-")[1])-int(varIDs[j].split("-")[1]))
+        
         fmat[0] = np.append(np.append(gene_feats[i], gene_feats[j]), [dist])
         fmat[1] = np.append(np.append(gene_feats[j], gene_feats[i]), [dist])
 
-        f1_features = [f"{f}_1" for f in feature_names]
-        f2_features = [f"{f}_2" for f in feature_names]
-
-        return pd.DataFrame(
-            data=fmat,
-            columns=f1_features + f2_features + ["var_dist"],
-            index=[f"{varIDs[i]}_{varIDs[j]}", f"{varIDs[j]}_{varIDs[i]}"],
-        )
+        f1_features = [f'{f}_1' for f in feature_names]
+        f2_features = [f'{f}_2' for f in feature_names]
+        
+        return pd.DataFrame(data=fmat, columns=f1_features + f2_features + ['var_dist'],
+                            index=[f'{varIDs[i]}_{varIDs[j]}', f'{varIDs[j]}_{varIDs[i]}'])
+        
 
     for i in range(len(varIDs)):
-        varii_feature_matrix = generate_feature_vector(i, i)
+        varii_feature_matrix = generate_feature_vector(i,i)            
         var1 = varIDs[i]
+        
+        if f'{var1}_{var1}' not in seen_pairs:               
+            if feature_df.loc[var1, 'zyg'] == 2:
 
-        if f"{var1}_{var1}" not in seen_pairs:
-            if feature_df.loc[var1, "zyg"] == 2:
-
-                if labeling:
-                    if feature_df.loc[var1, "is_strong"] == 1:
+                if labeling:                        
+                    if feature_df.loc[var1, 'is_strong'] == 1:
                         is_causal_wo_OMIM = 1
                     else:
                         is_causal_wo_OMIM = 0
-                    varii_feature_matrix["is_causal"] = is_causal_wo_OMIM
-
+                    varii_feature_matrix['is_causal'] = is_causal_wo_OMIM
+                
                 bivar_feature_mats.append(varii_feature_matrix)
-                seen_pairs.add(f"{var1}_{var1}")
-
+                seen_pairs.add(f'{var1}_{var1}')
+        
         if i < len(varIDs) - 1:
-            for j in range(i + 1, len(varIDs)):
+            for j in range(i+1, len(varIDs)):
                 var2 = varIDs[j]
-                if (
-                    (f"{var1}_{var2}" not in seen_pairs)
-                    and (f"{var2}_{var1}" not in seen_pairs)
-                    and (var1 != var2)
-                ):
+                if (f'{var1}_{var2}' not in seen_pairs) and (f'{var2}_{var1}' not in seen_pairs) and (var1 != var2):
                     varij_feature_matrix = generate_feature_vector(i, j)
-
+                    
                     if labeling:
                         is_causal_wo_OMIM = 0
 
-                        if (feature_df.loc[[var1, var2], "is_strong"] == 1).all():
-                            if (feature_df.loc[[var1, var2], "zyg"] == 1).all():
-                                is_causal_wo_OMIM = 1
+                        if (feature_df.loc[[var1, var2], 'is_strong'] == 1).all():
+                            if (feature_df.loc[[var1, var2], 'zyg'] == 1).all():
+                                is_causal_wo_OMIM = 1    
 
-                        varij_feature_matrix["is_causal"] = is_causal_wo_OMIM
+                        varij_feature_matrix['is_causal'] = is_causal_wo_OMIM
 
                     bivar_feature_mats.append(varij_feature_matrix)
 
-                    seen_pairs.add(f"{var1}_{var2}")
-                    seen_pairs.add(f"{var2}_{var1}")
+                    seen_pairs.add(f'{var1}_{var2}')
+                    seen_pairs.add(f'{var2}_{var1}')
                 else:
                     pass
 
-    if len(bivar_feature_mats) > 0:
+    if len(bivar_feature_mats) > 0:          
         bivar_feature_mats = pd.concat(bivar_feature_mats, axis=0)
         bivar_feature_mats = bivar_feature_mats.drop_duplicates()
-        bivar_feature_mats.to_csv(f"{out_folder}/{gene}.csv")
-
+        bivar_feature_mats.to_csv(f"{out_folder}/{gene}.csv")    
+    
     return

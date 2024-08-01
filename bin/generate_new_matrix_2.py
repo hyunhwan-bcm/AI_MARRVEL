@@ -32,7 +32,7 @@ else:
 merged["varId"] = merged["varId"].apply(lambda x: x.split("_E")[0])
 
 ### read tier ###
-tier_f = pd.read_csv("Tier.v2.tsv", sep="\t").sort_index()
+tier_f = pd.read_csv("Tier.v2.tsv", sep="\t")
 
 ### add phrank calculated elsewhere for final combination ###
 if phrank_empty:

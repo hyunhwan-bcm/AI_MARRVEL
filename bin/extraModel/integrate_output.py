@@ -11,8 +11,7 @@ def process_recessive_matrix(df):
 
     result = []
     for _, var_grp in var_grps:
-        var_grp = var_grp.sort_values("var2", kind="stable")        
-        var_grp = var_grp.sort_values("predict", ascending=False, kind="stable") 
+        var_grp = var_grp.sort_values("predict", ascending=False)
         result.append(var_grp.iloc[[0], :])
     result = pd.concat(result)
     result.set_index("var1", inplace=True)
@@ -32,7 +31,6 @@ def integrate_output(prj_folder, data_folder, sample_id):
         expanded_df = pd.read_csv(
             expanded_fn, sep="\t", index_col=0, compression="infer"
         )
-    expanded_df = expanded_df.sort_index()
     # expanded_df.append(df)
     # expanded_df = pd.concat(expanded_df)
     # expanded_df = expanded_df.loc[~expanded_df.index.duplicated(keep='first')]

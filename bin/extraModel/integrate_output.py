@@ -11,7 +11,7 @@ def process_recessive_matrix(df):
 
     result = []
     for _, var_grp in var_grps:
-        var_grp = var_grp.sort_index()
+        var_grp = var_grp.sort_values("var2", kind="stable")        
         var_grp = var_grp.sort_values("predict", ascending=False, kind="stable") 
         result.append(var_grp.iloc[[0], :])
     result = pd.concat(result)

@@ -338,6 +338,32 @@ process GENESYM_TO_PHRANK {
 }
 
 
+// PHRANK_SCORING in one step with the Rust `aim` binary (--rust): same <id>.phrank.txt.
+process PHRANK_RUST {
+    publishDir "${params.outdir}/${params.run_id}/phrank/", mode: 'copy'
+
+    input:
+    path vcf
+    path hpo
+    path ref_loc
+    path ref_to_sym
+    path dagfile
+    path disease_annotation
+    path disease_gene
+
+    output:
+    path "${params.run_id}.phrank.txt", emit: phrank
+
+    script:
+    """
+    ${params.aim_bin} phrank $vcf $hpo \\
+        --gene-locations $ref_loc --ensembl-to-symbol $ref_to_sym \\
+        --dag $dagfile --disease-annotations $disease_annotation --disease-genes $disease_gene \\
+        --out ${params.run_id}.phrank.txt
+    """
+}
+
+
 process HPO_SIM {
     container 'zhandongliulab/aim-lite-r'
 

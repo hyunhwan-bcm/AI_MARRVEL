@@ -59,7 +59,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – Python repr breaks exact 17-digit ties half-to-even; Rust's shortest formatter didn't — fixed
 - × Review of #45/#46: readr samples 999 spaced rows + last (fixed); float32/f64 repr ties half-even at any length; `sort_index` no-op when sorted
 - × PREDICTION I/O (part 2): expanded matrix, recessive pairs, recessive + nd_recessive — all files match both runs; SHAP identical
-- • phrank chain + HPO similarity (R)
+- > phrank chain + HPO similarity (R) — phrank done below; HPO similarity next
 - • Feature annotation (`feature.py`)
 - × Review of #47: no blocking issues (40 randomized samples matched Python byte for byte)
 - o Merged #45–#47 into fork `main`
@@ -74,3 +74,9 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × JOIN reads only the chromosome's ClinVar coding rows (streamed, dtypes from all rows): chr2 1.2–1.5 GB → 183 MB, output byte-identical
   - ! the earlier 643 MB join figure did not reproduce (full read measured 1.2–1.5 GB); corrected
 - • Final report artifact
+- × Review of #48: fixed HGMD columns lost when a chromosome's coding rows are all filtered, chrom-filter fallback, `--rust` param checks
+  - ! one review suggestion (strip the index in `predict`) was wrong — caught by re-running `predict` against the run's outputs, reverted to `to_csv_no_index`
+- × PHRANK_SCORING in Rust (`aim phrank`): VCF → genes → phrank ranking in one step, 4 processes → 1
+  - – scores sum over a Python set: CPython 3.8 set layout + SipHash emulated → `phrank.txt` byte-identical (2 runs + 5 larger HPO sets); sorted order would change last digits
+  - – `location_to_gene.py` bisection keeps a gene even without overlap — reproduced
+- × End-to-end `--rust true` with phrank: 108/108 tasks, 4 min 03 s (baseline 5 min 15 s); model outputs identical; features ≤ 6.9e-13 rel (pandas parser truncation in the baseline)

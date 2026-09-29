@@ -48,6 +48,7 @@ dependencies = [
  "polars",
  "serde",
  "serde_json",
+ "siphasher",
 ]
 
 [[package]]

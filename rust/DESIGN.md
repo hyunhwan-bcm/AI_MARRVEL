@@ -71,6 +71,15 @@ Rust port are added next to the originals, never in place of them.
   needs ~2.3 TiB of gnomAD downloads, judged too costly. hg38 predictions therefore never use
   `hom`; hg19 is unaffected.
 
+- phrank scores are sums over a Python set intersection, so their last digits depend on CPython's
+  set iteration order: random per run in production (#33), fixed under `PYTHONHASHSEED=0` (the
+  native config). The port reproduces that order (SipHash-2-4 with a zero key, CPython 3.8's set
+  table: `crate::pyset`) and matches the seeded pipeline byte for byte; summing in any other
+  order changes the last one or two digits of many scores.
+- `location_to_gene.py`'s `binary_search` is not an overlap test: it keeps the entry where the
+  bisection stopped even without a match, plus neighbours with the same coordinate. The gene
+  list therefore contains genes near, not at, a variant. Reproduced as is for `v1`.
+
 ## Open items
 
 - Training data (per-patient annotated files, pre-fill) for `v2` retraining.

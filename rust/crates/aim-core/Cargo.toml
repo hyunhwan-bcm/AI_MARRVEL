@@ -9,6 +9,8 @@ version.workspace = true
 flate2 = "1.1"
 polars = { version = "0.55.2", default-features = false, features = ["csv", "lazy", "decompress", "dtype-full"] }
 serde = { version = "1", features = ["derive"] }
+# CPython's str hash (SipHash-2-4), for phrank's set iteration order; already a Polars dependency
+siphasher = "1"
 # arbitrary_precision keeps each JSON number's text so floats parse straight to f32 without
 # going through f64 first.
 serde_json = { version = "1", features = ["arbitrary_precision"] }

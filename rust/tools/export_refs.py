@@ -62,6 +62,9 @@ def copy_unchanged(data, out):
         files.append(f"merge_expand/{r}/simpleRepeats.{r}.bed")
         files += [f"merge_expand/{r}/{t}.tsv.gz" for t in ("clin_c", "clin_nc", "hgmd_c", "hgmd_nc")]
         files.append(f"var_tier/{r}/genemap2.Inh.F.txt")
+        files += [f"phrank/{r}/{t}.txt" for t in ("child_to_parent", "disease_to_pheno", "disease_to_gene",
+                                                  "ensembl_to_symbol")]
+        files.append(f"phrank/{r}/{'grch37' if r == 'hg19' else 'grch38'}_symbol_to_location.txt")
     for rel in files:
         (out / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(data / rel, out / rel)

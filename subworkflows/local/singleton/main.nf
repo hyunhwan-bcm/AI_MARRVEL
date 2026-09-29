@@ -1,6 +1,6 @@
 include {
     VALIDATE_VCF; NORMALIZE_VCF; GENERATE_INPUT_VCF;
-    VCF_TO_VARIANTS; VARIANTS_TO_ENSEMBL; ENSEMBL_TO_GENESYM; GENESYM_TO_PHRANK;
+    VCF_TO_VARIANTS; VARIANTS_TO_ENSEMBL; ENSEMBL_TO_GENESYM; GENESYM_TO_PHRANK; PHRANK_RUST;
     CONVERT_GVCF; FILTER_UNPASSED; FILTER_MITO_AND_UNKOWN_CHR; FILTER_BED; FILTER_PROBAND;
     SPLIT_VCF_BY_CHROMOSOME; ANNOTATE_BY_VEP; HPO_SIM; ANNOTATE_BY_MODULES;
     ANNOTATE_TIER; JOIN_PHRANK; MERGE_SCORES_BY_CHROMOSOME; PREDICTION
@@ -63,26 +63,40 @@ workflow PHRANK_SCORING {
 
     main:
     phrank_tuple = data.map { it.phrank_tuple }
-    VCF_TO_VARIANTS(vcf)
-    VARIANTS_TO_ENSEMBL(
-        VCF_TO_VARIANTS.out,
-        phrank_tuple.map { it[0] },
-    )
-    ENSEMBL_TO_GENESYM(
-        VARIANTS_TO_ENSEMBL.out,
-        phrank_tuple.map { it[1] },
-    )
-    GENESYM_TO_PHRANK(
-        ENSEMBL_TO_GENESYM.out,
-        hpo,
-        phrank_tuple.map { it[2] },
-        phrank_tuple.map { it[3] },
-        phrank_tuple.map { it[4] },
-        phrank_tuple.map { it[5] },
-    )
+    if (params.rust) {
+        PHRANK_RUST(
+            vcf,
+            hpo,
+            phrank_tuple.map { it[0] },
+            phrank_tuple.map { it[1] },
+            phrank_tuple.map { it[2] },
+            phrank_tuple.map { it[3] },
+            phrank_tuple.map { it[5] },
+        )
+        phrank_out = PHRANK_RUST.out.phrank
+    } else {
+        VCF_TO_VARIANTS(vcf)
+        VARIANTS_TO_ENSEMBL(
+            VCF_TO_VARIANTS.out,
+            phrank_tuple.map { it[0] },
+        )
+        ENSEMBL_TO_GENESYM(
+            VARIANTS_TO_ENSEMBL.out,
+            phrank_tuple.map { it[1] },
+        )
+        GENESYM_TO_PHRANK(
+            ENSEMBL_TO_GENESYM.out,
+            hpo,
+            phrank_tuple.map { it[2] },
+            phrank_tuple.map { it[3] },
+            phrank_tuple.map { it[4] },
+            phrank_tuple.map { it[5] },
+        )
+        phrank_out = GENESYM_TO_PHRANK.out
+    }
 
     emit:
-    phrank = GENESYM_TO_PHRANK.out
+    phrank = phrank_out
 }
 
 workflow GENERATE_SINGLETON_FEATURES {

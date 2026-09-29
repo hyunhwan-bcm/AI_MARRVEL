@@ -1,8 +1,9 @@
 //! `aim`: AI-MARRVEL pipeline steps in Rust, one subcommand per Nextflow process, reading and
 //! writing the same files as the Python/R scripts they replace.
 
+use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -10,6 +11,9 @@ use aim_core::diffusion::Network;
 use aim_core::fill::FeatureStats;
 use aim_core::join::{chrom_filter, join_phrank, ClinVarTables};
 use aim_core::pandas::{read_df, to_csv, to_csv_no_index, Frame};
+use aim_core::phrank::{
+    first_fields, genes_via_symbols, phrank_text, vcf_variants, GeneLocations, Phrank,
+};
 use aim_core::postprocess::{post_process, write_matrix, MergeRefs, SimpleRepeats};
 use aim_core::predict_io::{extra_model, run_final, shap_json, Indexed};
 use aim_core::recessive::{expanded, recessive_matrix, recessive_model};
@@ -38,6 +42,29 @@ enum Command {
         #[arg(long)]
         merge_expand: PathBuf,
         #[arg(long, default_value = "scores.txt.gz")]
+        out: PathBuf,
+    },
+    /// PHRANK_SCORING (VCF_TO_VARIANTS, location_to_gene.py, ENSEMBL_TO_GENESYM, run_phrank.py):
+    /// VCF + HPO terms -> <id>.phrank.txt
+    Phrank {
+        vcf: PathBuf,
+        hpo: PathBuf,
+        /// phrank/<ref>/<assembly>_symbol_to_location.txt
+        #[arg(long)]
+        gene_locations: PathBuf,
+        /// phrank/<ref>/ensembl_to_symbol.txt
+        #[arg(long)]
+        ensembl_to_symbol: PathBuf,
+        /// phrank/<ref>/child_to_parent.txt
+        #[arg(long)]
+        dag: PathBuf,
+        /// phrank/<ref>/disease_to_pheno.txt
+        #[arg(long)]
+        disease_annotations: PathBuf,
+        /// phrank/<ref>/disease_to_gene.txt
+        #[arg(long)]
+        disease_genes: PathBuf,
+        #[arg(long)]
         out: PathBuf,
     },
     /// ANNOTATE_TIER (VarTierDiseaseDBFalse.R): scores.csv -> Tier.v2.tsv
@@ -205,6 +232,37 @@ fn run(cli: Cli) -> Result<()> {
             let tables = ClinVarTables::read_where(&merge_expand, &chrom_filter(&score)?)?;
             let joined = join_phrank(&score, &fs::read_to_string(&phrank)?, &tables)?;
             write_text(&out, &to_csv(&joined, '\t')?)?;
+        }
+        Command::Phrank {
+            vcf,
+            hpo,
+            gene_locations,
+            ensembl_to_symbol,
+            dag,
+            disease_annotations,
+            disease_genes,
+            out,
+        } => {
+            let file = File::open(&vcf)?;
+            let reader: Box<dyn std::io::Read> = if vcf.extension().is_some_and(|e| e == "gz") {
+                Box::new(flate2::read::MultiGzDecoder::new(file))
+            } else {
+                Box::new(file)
+            };
+            let locations = GeneLocations::parse(&fs::read_to_string(&gene_locations)?)?;
+            let mut ensembl = BTreeSet::new();
+            for (chrom, pos) in vcf_variants(BufReader::new(reader))? {
+                ensembl.extend(locations.genes_at(&chrom, pos));
+            }
+            let genes = genes_via_symbols(&ensembl, &fs::read_to_string(&ensembl_to_symbol)?);
+            let mut p = Phrank::new(
+                &fs::read_to_string(&dag)?,
+                &fs::read_to_string(&disease_annotations)?,
+                &fs::read_to_string(&disease_genes)?,
+            )?;
+            let hpo = first_fields(&fs::read_to_string(&hpo)?);
+            let ranked = p.rank_genes(&genes.into_iter().collect(), &hpo);
+            write_text(&out, &phrank_text(&ranked))?;
         }
         Command::Tier {
             scores,

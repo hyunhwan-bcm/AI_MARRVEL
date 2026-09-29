@@ -288,6 +288,10 @@ pub fn first_fields(text: &str) -> Vec<String> {
 }
 
 /// `VCF_TO_VARIANTS`: (chrom, pos) of each record, with every `chr` removed from the line.
+///
+/// Records whose REF or ALT contains `:` (symbolic or breakend alleles) are left out: the shell
+/// chain turns every `:` into a tab, so the gene is no longer field 5 for ENSEMBL_TO_GENESYM's
+/// `join` and such a record contributes no gene. So do records with fewer than 5 fields.
 pub fn vcf_variants(vcf: impl BufRead) -> io::Result<BTreeSet<(String, i64)>> {
     let mut out = BTreeSet::new();
     for line in vcf.lines() {
@@ -295,16 +299,19 @@ pub fn vcf_variants(vcf: impl BufRead) -> io::Result<BTreeSet<(String, i64)>> {
         if line.starts_with('#') {
             continue;
         }
-        let mut f = line.split('\t');
-        let (Some(chrom), Some(pos)) = (f.next(), f.next()) else {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() < 5 {
             continue;
-        };
-        let chrom = chrom.replace("chr", "");
-        let pos = pos.replace("chr", "");
+        }
+        let clean = |v: &str| v.replace("chr", "");
+        if clean(f[3]).contains(':') || clean(f[4]).contains(':') {
+            continue;
+        }
+        let pos = clean(f[1]);
         let pos: i64 = strip(&pos)
             .parse()
             .map_err(|_| invalid(format!("bad VCF position {pos:?}")))?;
-        out.insert((chrom, pos));
+        out.insert((clean(f[0]), pos));
     }
     Ok(out)
 }
@@ -450,5 +457,16 @@ mod tests {
             Score::Float(-((2.0f64 / 3.0).ln() / 2f64.ln()))
         );
         assert_eq!(ranked[2].1.repr(), "0.0"); // R's IC is a float -0.0
+    }
+
+    #[test]
+    fn records_with_colons_in_alleles_give_no_gene() {
+        let vcf = "#CHROM\tPOS\tID\tREF\tALT\n\
+                   chr1\t100\t.\tA\t<DEL:ME:ALU>\n\
+                   chr1\t200\t.\tG\tG]chr17:198982]\n\
+                   chr1\t300\t.\tC\tT\n\
+                   chr1\t400\n";
+        let got = vcf_variants(vcf.as_bytes()).unwrap();
+        assert_eq!(got.into_iter().collect::<Vec<_>>(), [("1".to_owned(), 300)]);
     }
 }

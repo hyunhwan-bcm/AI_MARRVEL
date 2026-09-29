@@ -10,3 +10,4 @@ testing*
 *.pyc
 bin/
 utils/
+rust/tests/golden/

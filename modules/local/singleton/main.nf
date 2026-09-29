@@ -447,7 +447,7 @@ process ANNOTATE_BY_VEP {
     script:
     def ref_assembly = (params.ref_ver == 'hg38') ? 'GRCh38' : 'GRCh37'
     """
-    /opt/vep/src/ensembl-vep/vep \\
+    \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} \\
         --dir_cache ${vep_dir_cache} \\
         --dir_plugins ${vep_dir_plugins} \\
         --fork ${task.cpus} --everything --format vcf \\

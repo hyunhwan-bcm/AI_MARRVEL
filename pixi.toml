@@ -1,0 +1,129 @@
+# Native (no-container) environments for running AIM v1.1.3 as the baseline.
+# Versions mirror the published images:
+#   zhandongliulab/aim-lite:1.2        -> env "py"   (Python 3.8.20, pip freeze of the image)
+#   zhandongliulab/aim-lite-r:latest   -> env "r"    (R 4.4.2, rocker tidyverse + ontology packages)
+#   ensemblorg/ensembl-vep:release_104.3 -> env "vep"
+#   bcftools 1.20 / bedtools 2.30.0 (image) -> env "tools" (bedtools 2.31.1: 2.30.0 has no osx-arm64 build)
+
+[workspace]
+name = "aim-baseline"
+channels = ["conda-forge", "bioconda"]
+platforms = ["osx-arm64", "linux-64"]
+
+# ---- CLI tools used by every process (GNU userland so the Linux-oriented scripts behave the same)
+[feature.tools.dependencies]
+bcftools = "1.20.*"
+htslib = "1.20.*"
+samtools = "1.20.*"
+bedtools = "2.31.*"
+vcftools = "0.1.16.*"
+gatk4 = "4.6.*"
+coreutils = "*"
+sed = "*"
+findutils = "*"
+gawk = "*"
+grep = "*"
+gzip = "*"
+wget = "*"
+jq = "*"
+file = "*"
+
+# ---- Python stage (aim-lite:1.2)
+[feature.py.dependencies]
+python = "3.8.20.*"
+llvm-openmp = "*"   # xgboost's macOS wheel loads libomp at runtime
+numpy = "1.24.4.*"
+numexpr = "2.8.4.*"   # image has 2.8.6 (PyPI); newest conda-forge py38 osx-arm64 build
+packaging = "25.0.*"
+py-cpuinfo = "9.0.0.*"   # pinned on the conda side because pytables depends on them
+pytables = "3.8.0.*"   # image: tables==3.8.0 from PyPI; no cp38 arm64 wheel, and only utils/ reads HDF5
+
+[feature.py.pypi-dependencies]
+certifi = "==2025.4.26"
+charset-normalizer = "==3.4.2"
+cloudpickle = "==3.1.1"
+contourpy = "==1.1.1"
+cycler = "==0.12.1"
+cython = "==3.1.0"
+fonttools = "==4.57.0"
+idna = "==3.10"
+imageio = "==2.35.1"
+importlib-metadata = "==8.5.0"
+importlib-resources = "==6.4.5"
+joblib = "==1.4.2"
+kiwisolver = "==1.4.7"
+lazy-loader = "==0.4"
+lime = "==0.2.0.1"
+llvmlite = "==0.41.1"
+matplotlib = "==3.7.5"
+msgpack = "==1.1.0"
+networkx = "==3.1"
+numba = "==0.58.1"
+pandas = "==1.4.3"
+phrank = "==1.6"
+pillow = "==10.4.0"
+pyparsing = "==3.1.4"
+python-dateutil = "==2.9.0.post0"
+pytz = "==2025.2"
+pywavelets = "==1.4.1"
+requests = "==2.32.3"
+scikit-image = "==0.21.0"
+scikit-learn = "==1.3.2"
+scipy = "==1.10.1"
+shap = "==0.44.1"
+six = "==1.17.0"
+slicer = "==0.0.7"
+threadpoolctl = "==3.5.0"
+tifffile = "==2023.7.10"
+tqdm = "==4.67.1"
+urllib3 = "==2.2.3"
+xgboost = "==2.1.4"
+zipp = "==3.20.2"
+
+# ---- R stage (aim-lite-r)
+[feature.r.dependencies]
+r-base = "4.4.2.*"
+r-dplyr = "1.1.4.*"
+r-tidyr = "1.3.1.*"
+r-readr = "2.1.5.*"
+r-tibble = "3.2.1.*"
+r-stringr = "1.5.1.*"
+"r-data.table" = "1.16.4.*"   # image has 1.16.2; not on conda-forge
+r-ontologyindex = "2.12.*"
+r-rcpp = "*"
+r-remotes = "*"
+cxx-compiler = "*"   # to build ontologySimilarity from CRAN (no conda build for osx-arm64)
+
+[feature.r.tasks]
+install-ontologysimilarity = { cmd = "Rscript -e 'if (!requireNamespace(\"ontologySimilarity\", quietly=TRUE) || packageVersion(\"ontologySimilarity\") != \"2.7\") remotes::install_version(\"ontologySimilarity\", version=\"2.7\", repos=\"https://cloud.r-project.org\", upgrade=\"never\")'" }
+
+# ---- VEP stage (ensembl-vep:release_104.3)
+# bioconda's ensembl-vep 104.3 pins perl 5.26.2, which has no osx-arm64 build. VEP itself is pure
+# Perl, so the code is extracted from the production image (native/fetch_vep.sh) and runs on this
+# native perl with the same dependency set bioconda declares for ensembl-vep (minus BioPerl, which
+# the image ships inside the VEP tree).
+[feature.vep.dependencies]
+perl = "5.32.*"
+htslib = "*"   # linked by perl-bio-db-hts; the image bundles its own htslib
+perl-bio-db-hts = ">=2.11"
+perl-dbi = "*"
+perl-io-compress = "*"
+perl-json = "*"
+perl-perlio-gzip = "*"
+perl-sereal = "*"
+perl-set-intervaltree = "*"
+perl-text-csv = "*"
+unzip = "*"
+
+[feature.vep.activation.env]
+AIM_VEP_HOME = "$PIXI_PROJECT_ROOT/.native/vep-104.3"
+PERL5LIB = "$PIXI_PROJECT_ROOT/.native/perl-overrides:$PIXI_PROJECT_ROOT/.native/vep-104.3:$PIXI_PROJECT_ROOT/.native/vep-104.3/modules"
+
+[feature.vep.tasks]
+fetch-vep = "bash native/fetch_vep.sh $PIXI_PROJECT_ROOT/.native/vep-104.3 && bash native/perl_overrides.sh $PIXI_PROJECT_ROOT/.native/perl-overrides"
+
+[environments]
+py = { features = ["py", "tools"], solve-group = "py" }
+r = { features = ["r"], no-default-feature = true }
+vep = { features = ["vep"], no-default-feature = true }
+tools = { features = ["tools"] }

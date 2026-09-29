@@ -18,10 +18,11 @@ def simple_repeat_anno(sample_id, feature_file, sp_bed_file):
     )
     sample_bed.to_csv("%s.bed" % (sample_id), index=False, header=False, sep="\t")
 
-    # bedtools needed
+    # bedtools needed (the aim-lite image ships it at /run/bedtools; otherwise use PATH)
+    bedtools = "/run/bedtools" if os.path.exists("/run/bedtools") else "bedtools"
     os.system(
-        "/run/bedtools intersect -a %s.bed -b %s -wa > %s.sp.bed"
-        % (sample_id, sp_bed_file, sample_id)
+        "%s intersect -a %s.bed -b %s -wa > %s.sp.bed"
+        % (bedtools, sample_id, sp_bed_file, sample_id)
     )
 
     if os.stat("%s.sp.bed" % (sample_id)).st_size == 0:

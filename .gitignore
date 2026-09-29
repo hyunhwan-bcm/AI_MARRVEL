@@ -31,3 +31,7 @@ test_output/
 */model_interpreter/results
 */model_interpreter/templates
 */model_interpreter/main.nf
+
+# Native (pixi) baseline
+/.pixi/
+/.native/

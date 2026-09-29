@@ -43,6 +43,9 @@ def main(model_inputs, out):
         (dst / "reference_panel.txt").write_text("".join(repr(float(v)) + "\n" for v in panel))
 
         best_iteration = getattr(model, "best_iteration", None)
+        if best_iteration is not None:
+            # predict_proba would stop at best_iteration; the Rust evaluator uses every tree.
+            sys.exit(f"{name}: model was trained with early stopping (best_iteration={best_iteration}); not supported")
         manifest = {
             "feature_set": "v1",
             "model_class": type(model).__name__,

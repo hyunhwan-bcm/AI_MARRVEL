@@ -13,7 +13,11 @@ use std::path::Path;
 use polars::prelude::*;
 
 /// The `merge_expand/<ref>/` tables. pandas reads them with one more field per row than header
-/// names, so the leading field becomes the index; it is dropped here.
+/// names, so the leading field becomes the index; it is kept as column [`INDEX`] because
+/// `add_c_nc.py` looks region rows up by that label (`.loc[j]`).
+/// Column holding pandas' index labels of a `merge_expand` table.
+pub const INDEX: &str = "__pandas_index";
+
 pub struct ClinVarTables {
     pub clin_c: DataFrame,
     pub clin_nc: DataFrame,
@@ -61,7 +65,11 @@ fn read_indexed_tsv(path: &Path) -> PolarsResult<DataFrame> {
         polars_bail!(ComputeError: "{}: {} header names but {} fields per row", path.display(), names.len(), body.width());
     }
     // Header names line up with the fields after the leading index.
-    let mut columns = Vec::new();
+    let index = body.columns()[0]
+        .as_materialized_series()
+        .cast(&DataType::Int64)?
+        .with_name(INDEX.into());
+    let mut columns = vec![index.into_column()];
     for (i, name) in names.iter().enumerate() {
         let s = body.columns()[i + 1]
             .as_materialized_series()
@@ -75,10 +83,13 @@ fn read_indexed_tsv(path: &Path) -> PolarsResult<DataFrame> {
 /// Type a string column the way `pd.read_csv` would: int64, float64, bool (TRUE/True/true),
 /// else string.
 fn pandas_typed(s: Series) -> PolarsResult<Series> {
-    let strs = s.str()?;
-    let non_null: Vec<&str> = strs.iter().flatten().filter(|v| !v.is_empty()).collect();
+    // pandas' NA strings (e.g. literal "NA") are missing values.
+    let is_na = |v: &str| crate::pandas::NA_STRINGS.contains(&v);
+    let strs: StringChunked = s.str()?.iter().map(|v| v.filter(|v| !is_na(v))).collect();
+    let s = strs.clone().into_series().with_name(s.name().clone());
+    let non_null: Vec<&str> = strs.iter().flatten().collect();
     let all = |f: &dyn Fn(&str) -> bool| non_null.iter().all(|v| f(v));
-    let has_null = strs.null_count() > 0 || strs.iter().flatten().any(str::is_empty);
+    let has_null = strs.null_count() > 0;
     if !has_null && all(&|v| v.parse::<i64>().is_ok()) {
         return s.cast(&DataType::Int64);
     }
@@ -104,13 +115,33 @@ fn left_join(
     right_on: &[&str],
     keep_right_keys: bool,
 ) -> PolarsResult<DataFrame> {
+    // `left.merge(right, how="left", ...)`: non-key columns present on both sides get pandas'
+    // `_x` / `_y` suffixes; the kept pandas index of a reference table is not a column.
+    let same_keys = left_on == right_on;
+    let mut left = left.clone();
+    let mut right = right.drop_many([INDEX]);
+    let left_names: Vec<String> = left
+        .get_column_names()
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+    let clashes: Vec<String> = right
+        .get_column_names()
+        .iter()
+        .map(|n| n.to_string())
+        .filter(|n| left_names.contains(n) && !(same_keys && left_on.contains(&n.as_str())))
+        .collect();
+    for n in &clashes {
+        left.rename(n, format!("{n}_x").into())?;
+        right.rename(n, format!("{n}_y").into())?;
+    }
     let mut args = JoinArgs::new(JoinType::Left);
     args.maintain_order = MaintainOrderJoin::LeftRight;
     if keep_right_keys {
         args = args.with_coalesce(JoinCoalesce::KeepColumns);
     }
     left.join(
-        right,
+        &right,
         left_on.iter().copied(),
         right_on.iter().copied(),
         args,
@@ -177,6 +208,29 @@ fn i64_values(df: &DataFrame, name: &str) -> PolarsResult<Vec<i64>> {
     Ok(c.i64()?.iter().map(|v| v.unwrap_or(i64::MIN)).collect())
 }
 
+/// `regions.loc[j, :]` for positions `j` from `np.where`: pandas looks rows up by index label,
+/// so position `j` fetches the row labelled `j` (a missing label is pandas' KeyError).
+fn take_by_label(regions: &DataFrame, positions: Vec<IdxSize>) -> PolarsResult<DataFrame> {
+    let labels = regions.column(INDEX)?.i64()?.clone();
+    let row_of: HashMap<i64, IdxSize> = labels
+        .iter()
+        .enumerate()
+        .filter_map(|(r, l)| l.map(|l| (l, r as IdxSize)))
+        .collect();
+    let rows = positions
+        .into_iter()
+        .map(|j| {
+            row_of
+                .get(&(j as i64))
+                .copied()
+                .ok_or_else(|| polars_err!(ComputeError: "KeyError: [{j}] not in index"))
+        })
+        .collect::<PolarsResult<Vec<_>>>()?;
+    regions
+        .drop_many([INDEX])
+        .take(&IdxCa::from_vec("".into(), rows))
+}
+
 /// `add_c_nc(score, ref)`.
 pub fn add_c_nc(score: &DataFrame, t: &ClinVarTables) -> PolarsResult<DataFrame> {
     let chrom = i64_values(score, "chrom")?;
@@ -188,7 +242,7 @@ pub fn add_c_nc(score: &DataFrame, t: &ClinVarTables) -> PolarsResult<DataFrame>
     let (li, ri) = region_pairs(&chrom, &pos, &t.clin_nc)?;
     let clin = var_id
         .take(&IdxCa::from_vec("".into(), li))?
-        .hstack(t.clin_nc.take(&IdxCa::from_vec("".into(), ri))?.columns())?;
+        .hstack(take_by_label(&t.clin_nc, ri)?.columns())?;
 
     let mut clin_c = t.clin_c.clone();
     clin_c.rename("new_chr", "chrom".into())?;
@@ -229,7 +283,7 @@ pub fn add_c_nc(score: &DataFrame, t: &ClinVarTables) -> PolarsResult<DataFrame>
         let (li, ri) = region_pairs(&chrom, &pos, &t.hgmd_nc)?;
         let hgmd = var_id
             .take(&IdxCa::from_vec("".into(), li))?
-            .hstack(t.hgmd_nc.take(&IdxCa::from_vec("".into(), ri))?.columns())?;
+            .hstack(take_by_label(&t.hgmd_nc, ri)?.columns())?;
         merged = left_join(&merged, &hgmd, &["varId"], &["varId"], false)?;
     }
     Ok(merged)
@@ -300,4 +354,54 @@ pub fn join_phrank(
         phr
     };
     left_join(&merged, &phr, &["geneEnsId"], &["ENSG"], true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn df(cols: Vec<Column>) -> DataFrame {
+        let h = cols[0].len();
+        DataFrame::new(h, cols).unwrap()
+    }
+
+    #[test]
+    fn clashing_columns_get_pandas_suffixes() {
+        let l = df(vec![
+            Column::new("k".into(), [1i64, 2]),
+            Column::new("v".into(), ["a", "b"]),
+        ]);
+        let r = df(vec![
+            Column::new("k".into(), [2i64]),
+            Column::new("v".into(), ["z"]),
+        ]);
+        let m = left_join(&l, &r, &["k"], &["k"], false).unwrap();
+        let names: Vec<&str> = m.get_column_names().iter().map(|n| n.as_str()).collect();
+        assert_eq!(names, vec!["k", "v_x", "v_y"]);
+    }
+
+    #[test]
+    fn region_rows_are_looked_up_by_pandas_label() {
+        // pandas index labels 1, 2: position 1 from np.where fetches the row labelled 1.
+        let regions = df(vec![
+            Column::new(INDEX.into(), [1i64, 2]),
+            Column::new("x".into(), ["first", "second"]),
+        ]);
+        let got = take_by_label(&regions, vec![1]).unwrap();
+        assert_eq!(
+            got.column("x").unwrap().str().unwrap().get(0),
+            Some("first")
+        );
+        assert!(
+            take_by_label(&regions, vec![0]).is_err(),
+            "label 0 is pandas' KeyError"
+        );
+    }
+
+    #[test]
+    fn na_strings_are_missing() {
+        let s = Series::new("c".into(), ["NA", "x", ""]);
+        let t = pandas_typed(s).unwrap();
+        assert_eq!(t.null_count(), 2);
+    }
 }

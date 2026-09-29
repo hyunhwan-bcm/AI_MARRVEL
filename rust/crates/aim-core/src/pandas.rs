@@ -75,7 +75,7 @@ pub fn py_float(s: &str) -> Option<f64> {
 }
 
 /// pandas' default NA strings for `read_csv`.
-const NA_STRINGS: &[&str] = &[
+pub(crate) const NA_STRINGS: &[&str] = &[
     "", "#N/A", "#N/A N/A", "#NA", "-1.#IND", "-1.#QNAN", "-NaN", "-nan", "1.#IND", "1.#QNAN",
     "<NA>", "N/A", "NA", "NULL", "NaN", "n/a", "nan", "null",
 ];

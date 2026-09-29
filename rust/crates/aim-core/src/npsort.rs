@@ -191,7 +191,13 @@ pub fn stable_sort_values_f64(values: &[f64], ascending: bool) -> Vec<usize> {
 }
 
 /// `sort_index()` of a string index (numpy object quicksort with Python str comparison).
+///
+/// pandas returns the frame unchanged when the index is already monotonic increasing, so equal
+/// ids keep their order then (the introsort could reorder them).
 pub fn sort_index_str(index: &[String]) -> Vec<usize> {
+    if index.windows(2).all(|w| w[0] <= w[1]) {
+        return (0..index.len()).collect();
+    }
     nargsort(index.len(), true, &|_| false, &|a, b| index[a] < index[b])
 }
 

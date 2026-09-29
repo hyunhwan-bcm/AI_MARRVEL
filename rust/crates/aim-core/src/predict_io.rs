@@ -96,12 +96,13 @@ pub fn py_repr_f32(x: f32) -> String {
         return py_repr(x as f64);
     }
     let sci = format!("{x:e}");
-    let (mantissa, exp) = sci.split_once('e').unwrap();
-    let exp: i32 = exp.parse().unwrap();
+    let (mantissa, _) = sci.split_once('e').unwrap();
     let (sign, mantissa) = mantissa
         .strip_prefix('-')
         .map_or(("", mantissa), |m| ("-", m));
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let shortest = mantissa.chars().filter(char::is_ascii_digit).count();
+    // numpy's float32 repr takes the nearest shortest string, ties to even (see pandas::py_repr)
+    let (digits, exp) = crate::pandas::round_half_even(f64::from(x.abs()), shortest);
     if (-4..16).contains(&exp) {
         let point = exp + 1;
         if point <= 0 {
@@ -299,5 +300,6 @@ mod tests {
         assert_eq!(py_repr_f32(2.5413758e-05), "2.5413758e-05");
         assert_eq!(py_repr_f32(4.5339763e-07), "4.5339763e-07");
         assert_eq!(py_repr_f32(1.0), "1.0");
+        assert_eq!(py_repr_f32(f32::from_bits(0x3ed1_0000)), "0.40820312"); // tie: numpy rounds to even
     }
 }

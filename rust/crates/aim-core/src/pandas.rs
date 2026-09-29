@@ -401,14 +401,14 @@ pub fn py_repr(x: f64) -> String {
     }
     let mut sci = String::with_capacity(32);
     let _ = write!(sci, "{x:e}");
-    repr_common(&sci, x.abs())
+    repr_common(&sci, x.abs(), false)
 }
 
 /// numpy `str(np.float32(x))` for finite non-zero `x` (same layout rules as [`py_repr`]).
 pub(crate) fn py_repr_f32_nonzero(x: f32) -> String {
     let mut sci = String::with_capacity(32);
     let _ = write!(sci, "{x:e}");
-    repr_common(&sci, f64::from(x.abs()))
+    repr_common(&sci, f64::from(x.abs()), true)
 }
 
 const LOG10_5: f64 = 1.0 - std::f64::consts::LOG10_2;
@@ -471,7 +471,14 @@ fn layout(out: &mut String, sign: &str, digits: &str, exp: i32) {
 }
 
 /// Digits of a Rust `{:e}` string, corrected for ties, in Python's layout.
-fn repr_common(sci: &str, xabs: f64) -> String {
+///
+/// Rust gives the shortest digits that read back as the value, and the closest such string.
+/// Python (and numpy's float32 repr) agree except when two shortest strings are equally close:
+/// then they take the even one. The half-even digits are used only if they also read back as
+/// the value; next to a power of two the gap below is half the gap above, and there the
+/// half-even string can fall outside the value's rounding interval (2^-24: Python prints
+/// `5.960464477539063e-08`, not `...062e-08`). `f32` selects the float32 read-back.
+fn repr_common(sci: &str, xabs: f64, f32_value: bool) -> String {
     let (mantissa, e) = sci.split_once('e').unwrap();
     let (sign, mantissa) = mantissa
         .strip_prefix('-')
@@ -485,13 +492,24 @@ fn repr_common(sci: &str, xabs: f64) -> String {
         }
     }
     let shortest = k;
+    let rust_digits = std::str::from_utf8(&buf[..k]).unwrap();
+    let rust_exp: i32 = e.parse().unwrap();
     let mut out = String::with_capacity(24);
     if no_tie(xabs, shortest) {
-        let digits = std::str::from_utf8(&buf[..k]).unwrap();
-        layout(&mut out, sign, digits, e.parse().unwrap());
+        layout(&mut out, sign, rust_digits, rust_exp);
+        return out;
+    }
+    let (digits, exp) = round_half_even(xabs, shortest);
+    let text = format!("{}.{}e{exp}", &digits[..1], &digits[1..]);
+    let reads_back = if f32_value {
+        text.parse::<f32>().ok().map(f64::from) == Some(xabs)
     } else {
-        let (digits, exp) = round_half_even(xabs, shortest);
+        text.parse::<f64>().ok() == Some(xabs)
+    };
+    if reads_back {
         layout(&mut out, sign, &digits, exp);
+    } else {
+        layout(&mut out, sign, rust_digits, rust_exp);
     }
     out
 }
@@ -608,17 +626,61 @@ mod tests {
         );
     }
 
-    /// The tie shortcut in `py_repr` never changes a result: compare with always taking the
-    /// exact half-even path, on random bit patterns and on float32 values widened to f64 (where
-    /// ties actually occur).
+    /// `py_repr` against an independent reference for Python's rule: among the strings with
+    /// the shortest length that read back as the value, the closest; on an exact tie, the one
+    /// with an even last digit. Random bit patterns, float32 values widened to f64 (where ties
+    /// occur) and every power of two.
     #[test]
-    fn repr_shortcut_matches_exact_rounding() {
-        fn exact(x: f64) -> String {
+    fn repr_matches_shortest_round_trip_rule() {
+        fn reference(x: f64) -> String {
             let sci = format!("{x:e}");
             let (m, _) = sci.split_once('e').unwrap();
             let m = m.strip_prefix('-').unwrap_or(m);
             let n = m.chars().filter(char::is_ascii_digit).count();
-            let (digits, exp) = round_half_even(x.abs(), n);
+            // the two n-digit neighbours of |x| (exact decimal expansion)
+            let exact = format!("{:.800e}", x.abs());
+            let (em, ee) = exact.split_once('e').unwrap();
+            let ee: i32 = ee.parse().unwrap();
+            let all: Vec<u8> = em
+                .bytes()
+                .filter(u8::is_ascii_digit)
+                .map(|b| b - b'0')
+                .collect();
+            let down: Vec<u8> = all[..n].to_vec();
+            let mut up = down.clone();
+            let mut up_exp = ee;
+            let mut i = n;
+            loop {
+                if i == 0 {
+                    up.insert(0, 1);
+                    up.pop();
+                    up_exp += 1;
+                    break;
+                }
+                i -= 1;
+                if up[i] < 9 {
+                    up[i] += 1;
+                    break;
+                }
+                up[i] = 0;
+            }
+            let text = |d: &[u8], e: i32| {
+                let s: String = d.iter().map(|v| char::from(b'0' + v)).collect();
+                (format!("{}.{}e{e}", &s[..1], &s[1..]), s)
+            };
+            let (td, sd) = text(&down, ee);
+            let (tu, su) = text(&up, up_exp);
+            let ok = |t: &str| t.parse::<f64>().ok() == Some(x.abs());
+            let rest = &all[n..];
+            let exact_tie = rest[0] == 5 && rest[1..].iter().all(|&v| v == 0);
+            let above_half = rest[0] > 5 || (rest[0] == 5 && !exact_tie);
+            let pick_up = match (ok(&td), ok(&tu)) {
+                (true, false) => false,
+                (false, true) => true,
+                _ if exact_tie => up[n - 1].is_multiple_of(2),
+                _ => above_half,
+            };
+            let (digits, exp) = if pick_up { (su, up_exp) } else { (sd, ee) };
             let mut out = String::new();
             layout(&mut out, if x < 0.0 { "-" } else { "" }, &digits, exp);
             out
@@ -630,15 +692,45 @@ mod tests {
             state ^= state << 17;
             state
         };
-        for _ in 0..200_000 {
-            let x = f64::from_bits(next());
+        let check = |x: f64| {
             if x.is_finite() && x != 0.0 {
-                assert_eq!(py_repr(x), exact(x), "{x:e}");
+                assert_eq!(py_repr(x), reference(x), "{x:e}");
             }
-            let y = f64::from(f32::from_bits(next() as u32));
-            if y.is_finite() && y != 0.0 {
-                assert_eq!(py_repr(y), exact(y), "{y:e}");
-            }
+        };
+        for e in -1074..1024 {
+            check(2f64.powi(e));
         }
+        for _ in 0..100_000 {
+            check(f64::from_bits(next()));
+            check(f64::from(f32::from_bits(next() as u32)));
+        }
+        // examples checked against Python 3.8
+        assert_eq!(py_repr(2f64.powi(-24)), "5.960464477539063e-08");
+    }
+
+    /// `$AIM_REPR_ORACLE`: lines `d<TAB>bits<TAB>repr(x)` / `f<TAB>bits<TAB>str(np.float32)`
+    /// written by Python/numpy.
+    #[test]
+    #[ignore = "needs $AIM_REPR_ORACLE (a file of Python/numpy reprs)"]
+    fn repr_matches_python_oracle() {
+        let Ok(path) = std::env::var("AIM_REPR_ORACLE") else {
+            eprintln!("AIM_REPR_ORACLE not set: skipped");
+            return;
+        };
+        let text = std::fs::read_to_string(path).unwrap();
+        let mut n = 0;
+        for line in text.lines() {
+            let f: Vec<&str> = line.split('\t').collect();
+            let got = if f[0] == "d" {
+                py_repr(f64::from_bits(u64::from_str_radix(f[1], 16).unwrap()))
+            } else {
+                crate::predict_io::py_repr_f32(f32::from_bits(
+                    u32::from_str_radix(f[1], 16).unwrap(),
+                ))
+            };
+            assert_eq!(got, f[2], "{line}");
+            n += 1;
+        }
+        assert!(n > 0);
     }
 }

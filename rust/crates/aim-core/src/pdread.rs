@@ -542,6 +542,9 @@ pub fn read_chunked(
     mut on_chunk: impl FnMut(&[Vec<Py>]) -> io::Result<()>,
 ) -> io::Result<usize> {
     let (layout, n_rows) = drive(reader, sep, skip_lines, Some(want), |chunk| {
+        if chunk.len() != want.len() {
+            return Err(invalid("missing requested columns"));
+        }
         let vals: Vec<Vec<Py>> = chunk.into_iter().map(|(_, v)| v).collect();
         on_chunk(&vals)
     })?;

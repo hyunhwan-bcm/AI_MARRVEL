@@ -405,6 +405,19 @@ pub fn py_repr(x: f64) -> String {
 
 /// `n` significant digits of `x` (> 0), rounded half to even from its exact decimal expansion.
 pub(crate) fn round_half_even(x: f64, n: usize) -> (String, i32) {
+    // A tie needs the exact value to end in 5 right after the n-th digit. Check that with
+    // cheap fixed-precision formats; only then expand exactly.
+    let near = format!("{x:.*e}", n); // n + 1 significant digits, correctly rounded
+    let (m, _) = near.split_once('e').unwrap();
+    let digits: String = m.chars().filter(char::is_ascii_digit).collect();
+    if !digits.ends_with('5') {
+        let short = format!("{x:.*e}", n - 1);
+        let (m, e) = short.split_once('e').unwrap();
+        return (
+            m.chars().filter(char::is_ascii_digit).collect(),
+            e.parse().unwrap(),
+        );
+    }
     let exact = format!("{x:.800e}"); // exact: every double has a finite decimal expansion
     let (m, e) = exact.split_once('e').unwrap();
     let mut exp: i32 = e.parse().unwrap();

@@ -27,85 +27,169 @@ pub struct ClinVarTables {
 
 impl ClinVarTables {
     pub fn read(dir: impl AsRef<Path>) -> PolarsResult<Self> {
+        Self::read_where(dir, &|_| true)
+    }
+
+    /// Reads the tables keeping only coding rows whose `new_chr` passes `keep_chr` (see
+    /// [`chrom_filter`]). Column types still come from every row, as `pd.read_csv` types the
+    /// whole file, so the kept rows are typed exactly as in [`ClinVarTables::read`]; the
+    /// region tables are small and read whole.
+    pub fn read_where(
+        dir: impl AsRef<Path>,
+        keep_chr: &dyn Fn(&str) -> bool,
+    ) -> PolarsResult<Self> {
         let dir = dir.as_ref();
+        let all = |_: &str| true;
         Ok(ClinVarTables {
-            clin_c: read_indexed_tsv(&dir.join("clin_c.tsv.gz"))?,
-            clin_nc: read_indexed_tsv(&dir.join("clin_nc.tsv.gz"))?,
-            hgmd_c: read_indexed_tsv(&dir.join("hgmd_c.tsv.gz"))?,
-            hgmd_nc: read_indexed_tsv(&dir.join("hgmd_nc.tsv.gz"))?,
+            clin_c: read_indexed_tsv(&dir.join("clin_c.tsv.gz"), keep_chr)?,
+            clin_nc: read_indexed_tsv(&dir.join("clin_nc.tsv.gz"), &all)?,
+            hgmd_c: read_indexed_tsv(&dir.join("hgmd_c.tsv.gz"), keep_chr)?,
+            hgmd_nc: read_indexed_tsv(&dir.join("hgmd_nc.tsv.gz"), &all)?,
         })
     }
 }
 
-/// A gzipped TSV whose data rows carry an extra leading index field. Empty tables (header
-/// only) come back with no rows.
-fn read_indexed_tsv(path: &Path) -> PolarsResult<DataFrame> {
-    use std::io::{BufRead, BufReader};
-    let file = std::fs::File::open(path)?;
-    let mut header = String::new();
-    BufReader::new(flate2::read::MultiGzDecoder::new(file)).read_line(&mut header)?;
-    let names: Vec<String> = header
-        .trim_end_matches(['\n', '\r'])
-        .split('\t')
+/// A `new_chr` filter keeping coding rows that can join a score table: the merge keys are cast
+/// to the score's `chrom` type, so a row can only match when its raw value equals one of the
+/// score's chromosomes as text or as an integer.
+pub fn chrom_filter(score: &DataFrame) -> PolarsResult<impl Fn(&str) -> bool> {
+    let c = score.column("chrom")?;
+    let text: std::collections::HashSet<String> = c
+        .cast(&DataType::String)?
+        .str()?
+        .iter()
+        .flatten()
         .map(str::to_owned)
         .collect();
-    let body = CsvReadOptions::default()
-        .with_has_header(false)
-        .with_skip_rows(1)
-        .with_infer_schema_length(Some(0)) // everything as strings; typed below like pandas
-        .with_parse_options(CsvParseOptions::default().with_separator(b'\t'))
-        .try_into_reader_with_file_path(Some(path.to_path_buf()))?
-        .finish();
-    // A header-only file (the public HGMD tables) has no rows.
-    let body = match body {
-        Ok(df) if df.height() > 0 => df,
-        _ => return Ok(DataFrame::empty()),
-    };
-    if body.width() != names.len() + 1 {
-        polars_bail!(ComputeError: "{}: {} header names but {} fields per row", path.display(), names.len(), body.width());
-    }
-    // Header names line up with the fields after the leading index.
-    let index = body.columns()[0]
-        .as_materialized_series()
-        .cast(&DataType::Int64)?
-        .with_name(INDEX.into());
-    let mut columns = vec![index.into_column()];
-    for (i, name) in names.iter().enumerate() {
-        let s = body.columns()[i + 1]
-            .as_materialized_series()
-            .clone()
-            .with_name(name.as_str().into());
-        columns.push(pandas_typed(s)?.into_column());
-    }
-    DataFrame::new(body.height(), columns)
+    let ints: std::collections::HashSet<i64> = text.iter().filter_map(|v| v.parse().ok()).collect();
+    Ok(move |v: &str| text.contains(v) || v.parse::<i64>().is_ok_and(|i| ints.contains(&i)))
 }
 
-/// Type a string column the way `pd.read_csv` would: int64, float64, bool (TRUE/True/true),
-/// else string.
-fn pandas_typed(s: Series) -> PolarsResult<Series> {
-    // pandas' NA strings (e.g. literal "NA") are missing values.
-    let is_na = |v: &str| crate::pandas::NA_STRINGS.contains(&v);
-    let strs: StringChunked = s.str()?.iter().map(|v| v.filter(|v| !is_na(v))).collect();
-    let s = strs.clone().into_series().with_name(s.name().clone());
-    let non_null: Vec<&str> = strs.iter().flatten().collect();
-    let all = |f: &dyn Fn(&str) -> bool| non_null.iter().all(|v| f(v));
-    let has_null = strs.null_count() > 0;
-    if !has_null && all(&|v| v.parse::<i64>().is_ok()) {
-        return s.cast(&DataType::Int64);
+/// What `pd.read_csv` would type a column as, gathered value by value.
+#[derive(Clone, Copy)]
+struct TypeFlags {
+    has_null: bool,
+    all_i64: bool,
+    all_f64: bool,
+    all_bool: bool,
+}
+
+impl TypeFlags {
+    const NEW: TypeFlags = TypeFlags {
+        has_null: false,
+        all_i64: true,
+        all_f64: true,
+        all_bool: true,
+    };
+
+    fn update(&mut self, v: Option<&str>) {
+        let Some(v) = v else {
+            self.has_null = true;
+            return;
+        };
+        self.all_i64 = self.all_i64 && v.parse::<i64>().is_ok();
+        self.all_f64 = self.all_f64 && v.parse::<f64>().is_ok();
+        self.all_bool = self.all_bool && as_bool(v).is_some();
     }
-    if all(&|v| v.parse::<f64>().is_ok()) {
-        return s.cast(&DataType::Float64);
+
+    /// int64 (no missing values), float64, bool (TRUE/True/true), else strings.
+    fn apply(self, strs: StringChunked) -> PolarsResult<Series> {
+        let s = strs.clone().into_series();
+        if !self.has_null && self.all_i64 {
+            return s.cast(&DataType::Int64);
+        }
+        if self.all_f64 {
+            return s.cast(&DataType::Float64);
+        }
+        if self.all_bool {
+            let b: BooleanChunked = strs.iter().map(|v| v.and_then(as_bool)).collect();
+            return Ok(b.into_series());
+        }
+        Ok(s)
     }
-    let as_bool = |v: &str| match v {
+}
+
+fn as_bool(v: &str) -> Option<bool> {
+    match v {
         "True" | "TRUE" | "true" => Some(true),
         "False" | "FALSE" | "false" => Some(false),
         _ => None,
-    };
-    if all(&|v| as_bool(v).is_some()) {
-        let b: BooleanChunked = strs.iter().map(|v| v.and_then(as_bool)).collect();
-        return Ok(b.into_series().with_name(s.name().clone()));
     }
-    Ok(s)
+}
+
+/// A gzipped TSV whose data rows carry an extra leading index field, streamed line by line:
+/// rows whose `new_chr` fails `keep_chr` are dropped as they are read (the coding ClinVar table
+/// has two million rows; one chromosome needs a fraction). Empty tables (header only) come back
+/// with no rows. The tables are plain TSV (no quoting), which is checked.
+fn read_indexed_tsv(path: &Path, keep_chr: &dyn Fn(&str) -> bool) -> PolarsResult<DataFrame> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path)?;
+    let mut lines = BufReader::new(flate2::read::MultiGzDecoder::new(file)).lines();
+    let header = match lines.next() {
+        Some(h) => h?,
+        None => return Ok(DataFrame::empty()),
+    };
+    let names: Vec<String> = header
+        .trim_end_matches('\r')
+        .split('\t')
+        .map(str::to_owned)
+        .collect();
+    let width = names.len() + 1;
+    let chr_field = names.iter().position(|n| n == "new_chr").map(|i| i + 1);
+    let is_na = |v: &str| crate::pandas::NA_STRINGS.contains(&v);
+    let mut flags = vec![TypeFlags::NEW; width];
+    let mut kept: Vec<Vec<Option<String>>> = vec![Vec::new(); width];
+    let mut rows = 0usize;
+    for line in lines {
+        let line = line?;
+        let line = line.trim_end_matches('\r');
+        if line.contains('"') {
+            polars_bail!(ComputeError: "{}: quoted fields are not supported", path.display());
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() != width {
+            polars_bail!(ComputeError: "{}: {} header names but {} fields in row {}", path.display(), names.len(), fields.len(), rows + 1);
+        }
+        rows += 1;
+        for (f, v) in flags.iter_mut().zip(&fields) {
+            f.update(Some(*v).filter(|v| !is_na(v)));
+        }
+        if chr_field.is_none_or(|c| keep_chr(fields[c])) {
+            for (k, v) in kept.iter_mut().zip(&fields) {
+                k.push(Some(*v).filter(|v| !is_na(v)).map(str::to_owned));
+            }
+        }
+    }
+    // A header-only file (the public HGMD tables) has no rows.
+    if rows == 0 {
+        return Ok(DataFrame::empty());
+    }
+    let mut columns = Vec::with_capacity(width);
+    for (j, (values, f)) in kept.into_iter().zip(flags).enumerate() {
+        let strs: StringChunked = values.iter().map(|v| v.as_deref()).collect();
+        let s = if j == 0 {
+            // Header names line up with the fields after the leading index.
+            strs.into_series()
+                .cast(&DataType::Int64)?
+                .with_name(INDEX.into())
+        } else {
+            f.apply(strs)?.with_name(names[j - 1].as_str().into())
+        };
+        columns.push(s.into_column());
+    }
+    let height = columns[0].len();
+    DataFrame::new(height, columns)
+}
+
+/// Type a string column the way `pd.read_csv` would: int64, float64, bool (TRUE/True/true),
+/// else string; pandas' NA strings (e.g. literal "NA") are missing values.
+#[cfg(test)]
+fn pandas_typed(s: Series) -> PolarsResult<Series> {
+    let is_na = |v: &str| crate::pandas::NA_STRINGS.contains(&v);
+    let strs: StringChunked = s.str()?.iter().map(|v| v.filter(|v| !is_na(v))).collect();
+    let mut f = TypeFlags::NEW;
+    strs.iter().for_each(|v| f.update(v));
+    Ok(f.apply(strs)?.with_name(s.name().clone()))
 }
 
 fn left_join(

@@ -33,5 +33,5 @@ test_output/
 */model_interpreter/main.nf
 
 # Native (pixi) baseline
-/.pixi/
-/.native/
+/.pixi
+/.native

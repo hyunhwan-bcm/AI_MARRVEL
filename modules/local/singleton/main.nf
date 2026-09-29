@@ -508,6 +508,13 @@ process ANNOTATE_TIER {
     path "${scores.simpleName}_Tier.v2.tsv", emit: tier
 
     script:
+    if (params.rust)
+    """
+    ${params.aim_bin} tier $scores \\
+        --inheritance ${ref_var_tier_dir}/${params.ref_ver}/genemap2.Inh.F.txt \\
+        --out ${scores.simpleName}_Tier.v2.tsv
+    """
+    else
     """
     mv $scores scores.csv
     VarTierDiseaseDBFalse.R ${params.ref_ver}
@@ -527,6 +534,13 @@ process JOIN_PHRANK {
     path "${scores.simpleName}_scores.txt.gz", emit: compressed_scores
 
     script:
+    if (params.rust)
+    """
+    ${params.aim_bin} join-phrank $scores $phrank \\
+        --merge-expand ${ref_merge_expand_dir}/${params.ref_ver} \\
+        --out ${scores.simpleName}_scores.txt.gz
+    """
+    else
     """
     mv $scores scores.csv
     generate_new_matrix_2.py ${params.run_id} ${params.ref_ver}
@@ -569,7 +583,7 @@ process MERGE_SCORES_BY_CHROMOSOME {
         fi
     done
 
-    post_processing.py ${params.run_id} ${params.ref_ver}
+    ${params.rust ? "${params.aim_bin} merge --scores scores.txt.gz --tier Tier.v2.tsv --phrank ${phrank} --refs ${params.rust_refs} --ref-ver ${params.ref_ver} --out ${params.run_id}.matrix.txt" : "post_processing.py ${params.run_id} ${params.ref_ver}"}
     """
 }
 
@@ -590,6 +604,12 @@ process PREDICTION {
     path "shap_outputs"
 
     script:
+    if (params.rust)
+    """
+    ${params.aim_bin} predict --matrix $merged_matrix --scores $merged_compressed_scores \\
+        --models ${params.rust_models} --id ${params.run_id} --out-dir .
+    """
+    else
     """
     mkdir final_matrix_expanded
     mkdir conf_4Model

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/aim-core"]
+members = ["crates/aim-cli","crates/aim-core"]
 
 [workspace.package]
 edition = "2021"

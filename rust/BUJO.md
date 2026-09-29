@@ -61,5 +61,16 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × PREDICTION I/O (part 2): expanded matrix, recessive pairs, recessive + nd_recessive — all files match both runs; SHAP identical
 - • phrank chain + HPO similarity (R)
 - • Feature annotation (`feature.py`)
-- • `aim` CLI + Nextflow `-profile rust` end-to-end comparison
+- × Review of #47: no blocking issues (40 randomized samples matched Python byte for byte)
+- o Merged #45–#47 into fork `main`
+  - ! deleted stacked base branches before GitHub recorded the merges → #46/#47 closed; restored branches, merged into bases, now MERGED
+- × `aim` CLI (join-phrank, tier, merge, predict) + opt-in `--rust true` in Nextflow
+  - – per step on ClinVar sample, Python/R → Rust: tier 1.01 s/207 MB → 0.01 s/53 MB; merge 4.14 s/1,592 MB → 0.51 s/223 MB; predict 7.83 s/676 MB → 2.08 s/344 MB; join chr2 2.64 s/947 MB → 0.93 s/183 MB (see below)
+  - – float repr: exact expansion only when a tie is possible (predict 4.25 s → 2.08 s)
+- ! first `--rust true` run failed at JOIN_PHRANK: stale release binary; rebuilt
+- × End-to-end `--rust true` on the ClinVar sample: 111/111 tasks, 4 min 38 s (baseline 5 min 15 s)
+  - – every output vs baseline, rows compared as sets: VCF/VEP identical; matrix, predictions, rankings, expanded ≤ 6.9e-13 rel; SHAP ≤ 1.8e-15 abs
+  - – merged row order differs run to run in *both* versions: Nextflow concatenates chromosomes in completion order
+- × JOIN reads only the chromosome's ClinVar coding rows (streamed, dtypes from all rows): chr2 1.2–1.5 GB → 183 MB, output byte-identical
+  - ! the earlier 643 MB join figure did not reproduce (full read measured 1.2–1.5 GB); corrected
 - • Final report artifact

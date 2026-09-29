@@ -5,7 +5,7 @@
 
 mod common;
 
-use aim_core::join::{join_phrank, ClinVarTables};
+use aim_core::join::{chrom_filter, join_phrank, ClinVarTables};
 use aim_core::pandas::{read_df, to_csv};
 use common::{golden_dir, refs_dir};
 use polars::prelude::*;
@@ -81,4 +81,22 @@ fn join_phrank_matches_nextflow() {
     check("nextflow_fixture", "chr17", &tables);
     check("nextflow_clinvar", "chr1", &tables);
     check("nextflow_clinvar", "chr17", &tables);
+}
+
+#[test]
+#[ignore = "needs exported refs: rust/tools/export_refs.py (run with --include-ignored)"]
+fn join_phrank_with_per_chromosome_tables_matches_nextflow() {
+    // The CLI reads only the chromosome's coding rows; the result must not change.
+    for (run, chrom) in [
+        ("nextflow_fixture", "chr17"),
+        ("nextflow_clinvar", "chr1"),
+        ("nextflow_clinvar", "chr17"),
+    ] {
+        let dir = golden_dir().join(run).join("join_phrank").join(chrom);
+        let score = read_df(dir.join("scores.csv.gz"), b',').unwrap();
+        let keep = chrom_filter(&score).unwrap();
+        let tables =
+            ClinVarTables::read_where(refs_dir().join("merge_expand/hg38"), &keep).unwrap();
+        check(run, chrom, &tables);
+    }
 }

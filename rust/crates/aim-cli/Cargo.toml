@@ -1,0 +1,12 @@
+[package]
+name = "aim"
+description = "AI-MARRVEL pipeline steps in Rust"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+aim-core = { path = "../aim-core" }
+clap = { version = "4", features = ["derive"] }
+flate2 = "1.1"
+polars = { version = "0.55.2", default-features = false, features = ["csv", "lazy", "decompress", "dtype-full"] }

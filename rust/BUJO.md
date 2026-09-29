@@ -70,7 +70,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - ! first `--rust true` run failed at JOIN_PHRANK: stale release binary; rebuilt
 - × End-to-end `--rust true` on the ClinVar sample: 111/111 tasks, 4 min 38 s (baseline 5 min 15 s)
   - – every output vs baseline, rows compared as sets: VCF/VEP identical; matrix, predictions, rankings, expanded ≤ 6.9e-13 rel; SHAP ≤ 1.8e-15 abs
-  - – merged row order differs run to run in *both* versions: Nextflow concatenates chromosomes in completion order
+  - – merged row order differs run to run in _both_ versions: Nextflow concatenates chromosomes in completion order
 - × JOIN reads only the chromosome's ClinVar coding rows (streamed, dtypes from all rows): chr2 1.2–1.5 GB → 183 MB, output byte-identical
   - ! the earlier 643 MB join figure did not reproduce (full read measured 1.2–1.5 GB); corrected
 - • Final report artifact

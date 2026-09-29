@@ -6,7 +6,8 @@ mod common;
 
 use std::path::Path;
 
-use aim_core::predict_io::{extra_model, run_final, shap_json, Indexed};
+use aim_core::predict_io::{extra_model, run_final, shap_json, Indexed, ModelOutput};
+use aim_core::recessive::{expanded, recessive_matrix, recessive_model};
 use aim_core::xgb::Booster;
 use common::pandas_parse::numbers_agree;
 use common::{golden_dir, model_dir, parse};
@@ -93,6 +94,106 @@ fn booster(model: &str) -> (Booster, Vec<f64>) {
     )
 }
 
+fn check_shap(run: &str, model: &str, b: &Booster, out: &ModelOutput, want: &Path) {
+    let got: serde_json::Value =
+        serde_json::from_str(&shap_json(b, &out.table.index, &out.rows, &out.data)).unwrap();
+    let want: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(want).unwrap()).unwrap();
+    let (ga, wa) = (got.as_array().unwrap(), want.as_array().unwrap());
+    assert_eq!(ga.len(), wa.len(), "{run} {model}: SHAP entries");
+    let (mut exact, mut parsed) = (0usize, 0usize);
+    for (g, w) in ga.iter().zip(wa) {
+        assert_eq!(
+            g["variant_id"], w["variant_id"],
+            "{run} {model}: SHAP row order"
+        );
+        assert_eq!(
+            g["base_value"], w["base_value"],
+            "{run} {model}: base_value"
+        );
+        assert_eq!(
+            g["model_output_score"], w["model_output_score"],
+            "{run} {model}: SHAP values"
+        );
+        for (k, gv) in g["feature_values"].as_object().unwrap() {
+            let (gs, ws) = (gv.to_string(), w["feature_values"][k].to_string());
+            if gs == ws {
+                exact += 1
+            } else {
+                assert!(
+                    numbers_agree(&gs, &ws, 0.0),
+                    "{run} {model}: feature_values[{k}] {gs} vs {ws}"
+                );
+                parsed += 1
+            }
+        }
+    }
+    eprintln!("{run} {model}: SHAP JSON — ids, base values and SHAP values identical; feature_values {exact} identical, {parsed} differ only by pandas float parsing");
+}
+
+/// `to_csv(index=False)`: drop the leading index field of each line.
+fn without_index(text: String) -> String {
+    text.lines()
+        .map(|l| &l[l.find(',').map_or(0, |i| i + 1)..])
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn check_recessive(run: &str, id: &str, dir: &Path, merged_scores: &Path, shap: bool) {
+    let gz = |name: &str| {
+        let p = dir.join(format!("{name}.gz"));
+        if p.exists() {
+            p
+        } else {
+            dir.join(name)
+        }
+    };
+    let dp = Indexed::read(gz(&format!("{id}.default_prediction.csv")), b',').unwrap();
+    let merged = aim_core::pandas::read_df(merged_scores, b'\t').unwrap();
+    let ex = expanded(&dp, &merged).unwrap();
+    compare(
+        &format!("{run} expanded"),
+        without_index(aim_core::pandas::to_csv(&ex, ',').unwrap()),
+        &gz(&format!("{id}.expanded.csv")),
+        b',',
+    );
+
+    // process_sample reads the expanded matrix and default predictions the pipeline wrote.
+    let ex_read = Indexed::read(gz(&format!("{id}.expanded.csv")), b',').unwrap();
+    let default_pred = Indexed::read(gz(&format!("{id}_default_predictions.csv")), b',').unwrap();
+    let rm = recessive_matrix(&dp, &ex_read, &default_pred)
+        .unwrap()
+        .expect("pairs");
+    compare(
+        &format!("{run} recessive matrix"),
+        rm.to_csv(',').unwrap(),
+        &gz(&format!("{id}.recessive_matrix.csv")),
+        b',',
+    );
+
+    let rm_read = Indexed::read(gz(&format!("{id}.recessive_matrix.csv")), b',').unwrap();
+    for model in ["recessive", "nd_recessive"] {
+        let (b, panel) = booster(model);
+        let out = recessive_model(&rm_read, &b, &panel).unwrap();
+        compare(
+            &format!("{run} {model}"),
+            out.table.to_csv(',').unwrap(),
+            &gz(&format!("{id}_{model}_predictions.csv")),
+            b',',
+        );
+        if shap {
+            check_shap(
+                run,
+                model,
+                &b,
+                &out,
+                &dir.join(format!("{id}_{model}_shap_values.json")),
+            );
+        }
+    }
+}
+
 fn check(run: &str, id: &str, matrix: &Path, dir: &Path, shap: bool) {
     let (default, _) = booster("default");
     let m = Indexed::read(matrix, b'\t').unwrap();
@@ -177,6 +278,13 @@ fn prediction_files_match_nextflow_fixture() {
         &dir,
         true,
     );
+    check_recessive(
+        "fixture",
+        "fixture",
+        &dir,
+        &golden_dir().join("nextflow_fixture/merge/scores.txt.gz"),
+        true,
+    );
 }
 
 #[test]
@@ -188,6 +296,13 @@ fn prediction_files_match_nextflow_clinvar() {
         "clinvar",
         &g.join("merge/matrix.txt"),
         &g.join("prediction"),
+        false,
+    );
+    check_recessive(
+        "clinvar",
+        "clinvar",
+        &g.join("prediction"),
+        &g.join("merge/scores.txt.gz"),
         false,
     );
 }

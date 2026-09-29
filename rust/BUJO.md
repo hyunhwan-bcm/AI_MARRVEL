@@ -57,7 +57,8 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – pandas `sort_values` is numpy's unstable introsort: ported, verified on tie-heavy inputs
   - ! pandas' CSV parser keeps 17 digits incl. leading zeros → up to ~1e-14 rel on small values (tests use it as an oracle)
   - – Python repr breaks exact 17-digit ties half-to-even; Rust's shortest formatter didn't — fixed
-- • PREDICTION I/O (part 2): recessive pairs, recessive models, expanded matrix
+- × Review of #45/#46: readr samples 999 spaced rows + last (fixed); float32/f64 repr ties half-even at any length; `sort_index` no-op when sorted
+- × PREDICTION I/O (part 2): expanded matrix, recessive pairs, recessive + nd_recessive — all files match both runs; SHAP identical
 - • phrank chain + HPO similarity (R)
 - • Feature annotation (`feature.py`)
 - • `aim` CLI + Nextflow `-profile rust` end-to-end comparison

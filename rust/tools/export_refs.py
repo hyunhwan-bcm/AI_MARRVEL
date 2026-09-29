@@ -12,6 +12,7 @@
 <out_dir>/annotate/feature_stats.csv                   copied unchanged
 <out_dir>/merge_expand/<ref>/simpleRepeats.<ref>.bed   copied unchanged (hg19, hg38)
 <out_dir>/merge_expand/<ref>/{clin,hgmd}_{c,nc}.tsv.gz  copied unchanged (hg19, hg38)
+<out_dir>/var_tier/<ref>/genemap2.Inh.F.txt           copied unchanged (hg19, hg38)
 """
 import shutil
 import hashlib
@@ -60,6 +61,7 @@ def copy_unchanged(data, out):
     for r in ("hg19", "hg38"):
         files.append(f"merge_expand/{r}/simpleRepeats.{r}.bed")
         files += [f"merge_expand/{r}/{t}.tsv.gz" for t in ("clin_c", "clin_nc", "hgmd_c", "hgmd_nc")]
+        files.append(f"var_tier/{r}/genemap2.Inh.F.txt")
     for rel in files:
         (out / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(data / rel, out / rel)

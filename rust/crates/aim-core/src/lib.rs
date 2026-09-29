@@ -6,4 +6,5 @@ pub mod join;
 pub mod pandas;
 pub mod postprocess;
 pub mod stats;
+pub mod tier;
 pub mod xgb;

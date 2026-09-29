@@ -134,11 +134,12 @@ fn as_bool(v: &str) -> Option<bool> {
 fn read_indexed_tsv(path: &Path, keep_chr: &dyn Fn(&str) -> bool) -> PolarsResult<DataFrame> {
     use std::io::{BufRead, BufReader};
     let file = std::fs::File::open(path)?;
-    let mut lines = BufReader::new(flate2::read::MultiGzDecoder::new(file)).lines();
-    let header = match lines.next() {
-        Some(h) => h?,
-        None => return Ok(DataFrame::empty()),
-    };
+    let mut reader = BufReader::with_capacity(1 << 16, flate2::read::MultiGzDecoder::new(file));
+    let mut header = String::new();
+    if reader.read_line(&mut header)? == 0 {
+        return Ok(DataFrame::empty());
+    }
+    let header = header.strip_suffix('\n').unwrap_or(&header).to_owned();
     let names: Vec<String> = header
         .trim_end_matches('\r')
         .split('\t')
@@ -150,13 +151,19 @@ fn read_indexed_tsv(path: &Path, keep_chr: &dyn Fn(&str) -> bool) -> PolarsResul
     let mut flags = vec![TypeFlags::NEW; width];
     let mut kept: Vec<Vec<Option<String>>> = vec![Vec::new(); width];
     let mut rows = 0usize;
-    for line in lines {
-        let line = line?;
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        if reader.read_line(&mut buf)? == 0 {
+            break;
+        }
+        let line = buf.strip_suffix('\n').unwrap_or(&buf);
         let line = line.trim_end_matches('\r');
         if line.contains('"') {
             polars_bail!(ComputeError: "{}: quoted fields are not supported", path.display());
         }
-        let fields: Vec<&str> = line.split('\t').collect();
+        let mut fields: Vec<&str> = Vec::with_capacity(width + 1);
+        fields.extend(line.split('\t'));
         if fields.len() != width {
             polars_bail!(ComputeError: "{}: {} header names but {} fields in row {}", path.display(), names.len(), fields.len(), rows + 1);
         }

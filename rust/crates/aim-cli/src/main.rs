@@ -19,7 +19,7 @@ use aim_core::phrank::{
     first_fields, genes_via_symbols, phrank_text, vcf_variants, GeneLocations, Phrank,
 };
 use aim_core::postprocess::{post_process, write_matrix, MergeRefs, SimpleRepeats};
-use aim_core::predict_io::{extra_model, run_final, shap_json, Indexed};
+use aim_core::predict_io::{extra_model, run_final, write_shap_json, Indexed};
 use aim_core::recessive::{expanded, recessive_matrix, recessive_model};
 use aim_core::tier::{read_inheritance, tier};
 use aim_core::xgb::Booster;
@@ -178,6 +178,20 @@ fn write_text(path: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Streams a file written by `f` (parent directories created).
+fn write_json(
+    path: &Path,
+    f: impl FnOnce(&mut BufWriter<File>) -> std::io::Result<()>,
+) -> Result<()> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    let mut w = BufWriter::new(File::create(path)?);
+    f(&mut w)?;
+    w.flush()?;
+    Ok(())
+}
+
 struct Model {
     booster: Booster,
     reference: Vec<f64>,
@@ -223,9 +237,9 @@ fn predict(matrix: &Path, scores: &Path, models: &Path, id: &str, out: &Path) ->
             &conf.join(format!("{id}_{name}_predictions.csv")),
             &o.table.to_csv(',')?,
         )?;
-        write_text(
+        write_json(
             &shap_dir.join(format!("{id}_{name}_shap_values.json")),
-            &shap_json(&model.booster, &o.table.index, &o.rows, &o.data),
+            |w| write_shap_json(w, &model.booster, &o.table.index, &o.rows, &o.data),
         )?;
         if name == "default" {
             default_pred = Some(o.table);
@@ -258,9 +272,9 @@ fn predict(matrix: &Path, scores: &Path, models: &Path, id: &str, out: &Path) ->
             &conf.join(format!("{id}_{name}_predictions.csv")),
             &o.table.to_csv(',')?,
         )?;
-        write_text(
+        write_json(
             &shap_dir.join(format!("{id}_{name}_shap_values.json")),
-            &shap_json(&model.booster, &o.table.index, &o.rows, &o.data),
+            |w| write_shap_json(w, &model.booster, &o.table.index, &o.rows, &o.data),
         )?;
     }
     Ok(())
@@ -374,7 +388,7 @@ fn run(cli: Cli) -> Result<()> {
             };
             let scores = Frame::read_path(&scores, b'\t')?;
             let tier = Frame::read_path(&tier, b'\t')?;
-            let table = post_process(&scores, &tier, &fs::read_to_string(&phrank)?, &merge_refs)?;
+            let table = post_process(scores, &tier, &fs::read_to_string(&phrank)?, &merge_refs)?;
             let mut w = BufWriter::new(File::create(&out)?);
             write_matrix(&table, &mut w)?;
             w.flush()?;

@@ -8,6 +8,7 @@
 //! rounding rather than bit for bit; the row scores are ranks of heat, so they match unless two
 //! genes' heat values are within rounding of each other.
 
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
@@ -76,15 +77,18 @@ impl SparseMatrix {
 
     /// `self @ x`, summed in f64 and rounded once to f32.
     fn mul_vec(&self, x: &[f32], out: &mut [f32]) {
-        for (i, o) in out.iter_mut().enumerate() {
-            let range = self.indptr[i]..self.indptr[i + 1];
-            let sum: f64 = self.indices[range.clone()]
-                .iter()
-                .zip(&self.values[range])
-                .map(|(&j, &v)| v as f64 * x[j as usize] as f64)
-                .sum();
-            *o = sum as f32;
-        }
+        out.par_iter_mut()
+            .enumerate()
+            .with_min_len(1024)
+            .for_each(|(i, o)| {
+                let range = self.indptr[i]..self.indptr[i + 1];
+                let sum: f64 = self.indices[range.clone()]
+                    .iter()
+                    .zip(&self.values[range])
+                    .map(|(&j, &v)| v as f64 * x[j as usize] as f64)
+                    .sum();
+                *o = sum as f32;
+            });
     }
 }
 

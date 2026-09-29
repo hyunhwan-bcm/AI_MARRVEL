@@ -408,14 +408,21 @@ impl Table {
     }
 }
 
-/// `pd.read_csv(reader, sep=sep, skiprows=skip_lines)` keeping the columns named in `want`
-/// (all columns when `want` is None). Positional columns can be requested as `"#0"`, `"#1"`.
-pub fn read_table(
+/// Header and the requested column positions of a table.
+struct Layout {
+    names: Vec<String>,
+    wanted: Vec<(usize, String)>,
+}
+
+/// Reads the header and then every chunk of `chunk_rows` records, converting each chunk of
+/// each wanted column as pandas does and handing the chunk to `on_chunk`.
+fn drive(
     mut reader: impl BufRead,
     sep: char,
     skip_lines: usize,
     want: Option<&[&str]>,
-) -> io::Result<Table> {
+    mut on_chunk: impl FnMut(Vec<(ChunkKind, Vec<Py>)>) -> io::Result<()>,
+) -> io::Result<(Layout, usize)> {
     let mut line = String::new();
     for _ in 0..skip_lines {
         line.clear();
@@ -455,18 +462,17 @@ pub fn read_table(
     while chunk_rows * 2 < heuristic {
         chunk_rows *= 2;
     }
-
-    let mut chunks: Vec<Vec<(ChunkKind, Vec<Py>)>> = vec![Vec::new(); wanted.len()];
     let mut buf: Vec<Vec<Option<String>>> = vec![Vec::with_capacity(chunk_rows); wanted.len()];
     let mut n_rows = 0usize;
-    let flush = |buf: &mut Vec<Vec<Option<String>>>,
-                 chunks: &mut Vec<Vec<(ChunkKind, Vec<Py>)>>| {
-        for (b, c) in buf.iter_mut().zip(chunks.iter_mut()) {
-            if !b.is_empty() {
-                c.push(convert_chunk(b));
+    let mut flush = |buf: &mut Vec<Vec<Option<String>>>| -> io::Result<()> {
+        if buf.first().is_some_and(|b| !b.is_empty()) {
+            let chunk = buf.iter().map(|b| convert_chunk(b)).collect();
+            for b in buf.iter_mut() {
                 b.clear();
             }
+            on_chunk(chunk)?;
         }
+        Ok(())
     };
     while let Some(rec) = records.next_record()? {
         let fields = split_fields(&rec, sep);
@@ -483,20 +489,66 @@ pub fn read_table(
         }
         n_rows += 1;
         if n_rows.is_multiple_of(chunk_rows) {
-            flush(&mut buf, &mut chunks);
+            flush(&mut buf)?;
         }
     }
-    flush(&mut buf, &mut chunks);
-    let cols = wanted
+    flush(&mut buf)?;
+    Ok((Layout { names, wanted }, n_rows))
+}
+
+/// `pd.read_csv(reader, sep=sep, skiprows=skip_lines)` keeping the columns named in `want`
+/// (all columns when `want` is None). Positional columns can be requested as `"#0"`, `"#1"`.
+pub fn read_table(
+    reader: impl BufRead,
+    sep: char,
+    skip_lines: usize,
+    want: Option<&[&str]>,
+) -> io::Result<Table> {
+    let mut chunks: Vec<Vec<(ChunkKind, Vec<Py>)>> = Vec::new();
+    let (layout, n_rows) = drive(reader, sep, skip_lines, want, |chunk| {
+        if chunks.is_empty() {
+            chunks = vec![Vec::new(); chunk.len()];
+        }
+        for (c, part) in chunks.iter_mut().zip(chunk) {
+            c.push(part);
+        }
+        Ok(())
+    })?;
+    if chunks.is_empty() {
+        chunks = vec![Vec::new(); layout.wanted.len()];
+    }
+    let cols = layout
+        .wanted
         .into_iter()
         .zip(chunks)
         .map(|((_, name), c)| (name, concat_chunks(c)))
         .collect();
     Ok(Table {
-        names,
+        names: layout.names,
         cols,
         n_rows,
     })
+}
+
+/// Like [`read_table`] but hands over each chunk (the requested columns, in `want` order, typed
+/// per chunk) instead of keeping the table. For consumers that only look at values one by one,
+/// where the chunk-to-column concatenation makes no difference (numbers stay numbers, strings
+/// stay strings).
+pub fn read_chunked(
+    reader: impl BufRead,
+    sep: char,
+    skip_lines: usize,
+    want: &[&str],
+    mut on_chunk: impl FnMut(&[Vec<Py>]) -> io::Result<()>,
+) -> io::Result<usize> {
+    let (layout, n_rows) = drive(reader, sep, skip_lines, Some(want), |chunk| {
+        let vals: Vec<Vec<Py>> = chunk.into_iter().map(|(_, v)| v).collect();
+        on_chunk(&vals)
+    })?;
+    if layout.wanted.len() != want.len() {
+        return Err(invalid("missing requested columns"));
+    }
+    Ok(n_rows)
 }
 
 #[cfg(test)]

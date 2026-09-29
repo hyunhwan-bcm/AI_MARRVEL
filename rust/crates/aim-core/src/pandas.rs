@@ -2,7 +2,10 @@
 //! decide exact numbers: cell types as the fill logic sees them, `Series.describe()` statistics
 //! (numpy pairwise-sum mean, linear median) and Python float formatting.
 
+use std::fmt::Write as _;
+
 use polars::prelude::*;
+use rayon::prelude::*;
 
 /// One cell as pandas holds it after `read_csv`.
 #[derive(Debug, Clone, PartialEq)]
@@ -94,20 +97,22 @@ impl Frame {
         let df = csv_options(sep)
             .try_into_reader_with_file_path(Some(path.as_ref().to_path_buf()))?
             .finish()?;
-        Frame::from_polars(&df)
+        Frame::from_polars(df)
     }
 
     pub fn read_str(text: &str, sep: u8) -> PolarsResult<Frame> {
         let df = CsvReader::new(std::io::Cursor::new(text.as_bytes().to_vec()))
             .with_options(csv_options(sep))
             .finish()?;
-        Frame::from_polars(&df)
+        Frame::from_polars(df)
     }
 
-    fn from_polars(df: &DataFrame) -> PolarsResult<Frame> {
+    /// Converts column by column, freeing each Polars column once converted (only one copy
+    /// of the table is alive at a time).
+    fn from_polars(df: DataFrame) -> PolarsResult<Frame> {
         let mut columns = Vec::new();
         let mut data = Vec::new();
-        for (i, col) in df.columns().iter().enumerate() {
+        for (i, col) in df.into_columns().into_iter().enumerate() {
             let name = col.name().as_str();
             columns.push(if name.is_empty() {
                 format!("Unnamed: {i}")
@@ -158,6 +163,12 @@ impl Frame {
         self.data.first().map_or(0, Vec::len)
     }
 
+    /// Moves a column out (leaving it empty).
+    pub fn take_col(&mut self, name: &str) -> Vec<Cell> {
+        let i = self.col_index(name);
+        std::mem::take(&mut self.data[i])
+    }
+
     pub fn col(&self, name: &str) -> &Vec<Cell> {
         let i = self.col_index(name);
         &self.data[i]
@@ -203,51 +214,53 @@ fn render_csv(df: &DataFrame, sep: char, index: bool) -> PolarsResult<String> {
         .iter()
         .map(|c| c.as_materialized_series())
         .collect();
-    let mut rendered: Vec<Vec<String>> = Vec::with_capacity(cols.len());
-    for s in &cols {
-        let v: Vec<String> = match s.dtype() {
-            DataType::Int64 if s.null_count() == 0 => s
-                .i64()?
-                .into_no_null_iter()
-                .map(|x| x.to_string())
-                .collect(),
-            DataType::Int64 => s
-                .i64()?
-                .iter()
-                .map(|x| x.map_or(String::new(), |x| py_repr(x as f64)))
-                .collect(),
-            DataType::Float64 => s
-                .f64()?
-                .iter()
-                .map(|x| match x {
-                    Some(x) if !x.is_nan() => py_repr(x),
-                    _ => String::new(),
-                })
-                .collect(),
-            DataType::Boolean => s
-                .bool()?
-                .iter()
-                .map(|x| {
-                    x.map_or(String::new(), |b| {
-                        if b { "True" } else { "False" }.to_owned()
+    let rendered: Vec<Vec<String>> = cols
+        .par_iter()
+        .map(|s| -> PolarsResult<Vec<String>> {
+            let v: Vec<String> = match s.dtype() {
+                DataType::Int64 if s.null_count() == 0 => s
+                    .i64()?
+                    .into_no_null_iter()
+                    .map(|x| x.to_string())
+                    .collect(),
+                DataType::Int64 => s
+                    .i64()?
+                    .iter()
+                    .map(|x| x.map_or(String::new(), |x| py_repr(x as f64)))
+                    .collect(),
+                DataType::Float64 => s
+                    .f64()?
+                    .iter()
+                    .map(|x| match x {
+                        Some(x) if !x.is_nan() => py_repr(x),
+                        _ => String::new(),
                     })
-                })
-                .collect(),
-            DataType::String => s
-                .str()?
-                .iter()
-                .map(|x| x.map_or(String::new(), quote))
-                .collect(),
-            DataType::Null => vec![String::new(); s.len()],
-            _ => s
-                .cast(&DataType::String)?
-                .str()?
-                .iter()
-                .map(|x| x.map_or(String::new(), quote))
-                .collect(),
-        };
-        rendered.push(v);
-    }
+                    .collect(),
+                DataType::Boolean => s
+                    .bool()?
+                    .iter()
+                    .map(|x| {
+                        x.map_or(String::new(), |b| {
+                            if b { "True" } else { "False" }.to_owned()
+                        })
+                    })
+                    .collect(),
+                DataType::String => s
+                    .str()?
+                    .iter()
+                    .map(|x| x.map_or(String::new(), quote))
+                    .collect(),
+                DataType::Null => vec![String::new(); s.len()],
+                _ => s
+                    .cast(&DataType::String)?
+                    .str()?
+                    .iter()
+                    .map(|x| x.map_or(String::new(), quote))
+                    .collect(),
+            };
+            Ok(v)
+        })
+        .collect::<PolarsResult<_>>()?;
     let mut out = String::new();
     let names: Vec<String> = df
         .get_column_names()
@@ -371,6 +384,11 @@ fn percentile_linear(sorted: &[f64], q: f64) -> f64 {
 }
 
 /// Python `repr(float)`: shortest round-trip digits; scientific below 1e-4 or from 1e16.
+///
+/// Rust's shortest formatter gives the shortest length; its digits are Python's unless two
+/// shortest strings are equally close to the value (e.g. float32 values widened to f64), where
+/// Python rounds the exact value half to even. [`no_tie`] rules that out cheaply for almost
+/// every value; otherwise the digits are recomputed with [`round_half_even`].
 pub fn py_repr(x: f64) -> String {
     if x.is_nan() {
         return "nan".into();
@@ -381,42 +399,101 @@ pub fn py_repr(x: f64) -> String {
     if x == 0.0 {
         return if x.is_sign_negative() { "-0.0" } else { "0.0" }.into();
     }
-    let sci = format!("{:e}", x); // e.g. "-2.142857142857142e-1"
-    let (mantissa, _) = sci.split_once('e').unwrap();
-    let (sign, mantissa) = mantissa
-        .strip_prefix('-')
-        .map_or(("", mantissa), |m| ("-", m));
-    let shortest = mantissa.chars().filter(char::is_ascii_digit).count();
-    // Two shortest strings can be equally close to the value (e.g. float32 values widened to
-    // f64); Python's repr takes the nearest, ties to even. Rust's shortest formatter gives the
-    // length but may pick the other digit, so round the exact value half-even at that length.
-    let (digits, exp) = round_half_even(x.abs(), shortest);
+    let mut sci = String::with_capacity(32);
+    let _ = write!(sci, "{x:e}");
+    repr_common(&sci, x.abs())
+}
+
+/// numpy `str(np.float32(x))` for finite non-zero `x` (same layout rules as [`py_repr`]).
+pub(crate) fn py_repr_f32_nonzero(x: f32) -> String {
+    let mut sci = String::with_capacity(32);
+    let _ = write!(sci, "{x:e}");
+    repr_common(&sci, f64::from(x.abs()))
+}
+
+const LOG10_5: f64 = 1.0 - std::f64::consts::LOG10_2;
+/// True when `x`'s exact decimal expansion certainly has more than `n + 1` significant digits.
+/// A tie at `n` digits needs exactly `n + 1` (the last a 5), so then the shortest digits are
+/// the correctly rounded ones. `x = m 2^q` with `m` odd has `floor(log10(m 5^-q)) + 1` digits
+/// for `q < 0`; the bound below is a lower estimate with half a digit of slack.
+#[inline]
+fn no_tie(x: f64, n: usize) -> bool {
+    let bits = x.to_bits();
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    let f = bits & ((1u64 << 52) - 1);
+    let (mut m, mut q) = if e == 0 {
+        (f, -1074)
+    } else {
+        (f | (1u64 << 52), e - 1075)
+    };
+    let tz = m.trailing_zeros();
+    m >>= tz;
+    q += tz as i32;
+    if q >= 0 {
+        return false;
+    }
+    let b = (64 - m.leading_zeros()) as f64;
+    (b - 1.0) * std::f64::consts::LOG10_2 + (-q) as f64 * LOG10_5 >= n as f64 + 1.5
+}
+
+/// Python's float layout of `digits` with decimal exponent `exp`.
+fn layout(out: &mut String, sign: &str, digits: &str, exp: i32) {
+    out.push_str(sign);
     if (-4..16).contains(&exp) {
-        let point = exp + 1; // digits before the decimal point
+        let point = exp + 1;
         if point <= 0 {
-            format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
+            out.push_str("0.");
+            for _ in 0..(-point) {
+                out.push('0');
+            }
+            out.push_str(digits);
         } else if point as usize >= digits.len() {
-            format!(
-                "{sign}{digits}{}.0",
-                "0".repeat(point as usize - digits.len())
-            )
+            out.push_str(digits);
+            for _ in 0..(point as usize - digits.len()) {
+                out.push('0');
+            }
+            out.push_str(".0");
         } else {
             let (int, frac) = digits.split_at(point as usize);
-            format!("{sign}{int}.{frac}")
+            out.push_str(int);
+            out.push('.');
+            out.push_str(frac);
         }
     } else {
         let (first, rest) = digits.split_at(1);
-        let rest = if rest.is_empty() {
-            String::new()
-        } else {
-            format!(".{rest}")
-        };
-        format!(
-            "{sign}{first}{rest}e{}{:02}",
-            if exp < 0 { '-' } else { '+' },
-            exp.abs()
-        )
+        out.push_str(first);
+        if !rest.is_empty() {
+            out.push('.');
+            out.push_str(rest);
+        }
+        let _ = write!(out, "e{}{:02}", if exp < 0 { '-' } else { '+' }, exp.abs());
     }
+}
+
+/// Digits of a Rust `{:e}` string, corrected for ties, in Python's layout.
+fn repr_common(sci: &str, xabs: f64) -> String {
+    let (mantissa, e) = sci.split_once('e').unwrap();
+    let (sign, mantissa) = mantissa
+        .strip_prefix('-')
+        .map_or(("", mantissa), |m| ("-", m));
+    let mut buf = [0u8; 40];
+    let mut k = 0;
+    for &c in mantissa.as_bytes() {
+        if c != b'.' {
+            buf[k] = c;
+            k += 1;
+        }
+    }
+    let shortest = k;
+    let mut out = String::with_capacity(24);
+    if no_tie(xabs, shortest) {
+        let digits = std::str::from_utf8(&buf[..k]).unwrap();
+        layout(&mut out, sign, digits, e.parse().unwrap());
+    } else {
+        let (digits, exp) = round_half_even(xabs, shortest);
+        layout(&mut out, sign, &digits, exp);
+    }
+    out
 }
 
 /// `n` significant digits of `x` (> 0), rounded half to even from its exact decimal expansion.
@@ -529,5 +606,39 @@ mod tests {
             to_csv_no_index(&df, ',').unwrap(),
             "id,x\na,1.5\n\"b\nc\",2.0\n"
         );
+    }
+
+    /// The tie shortcut in `py_repr` never changes a result: compare with always taking the
+    /// exact half-even path, on random bit patterns and on float32 values widened to f64 (where
+    /// ties actually occur).
+    #[test]
+    fn repr_shortcut_matches_exact_rounding() {
+        fn exact(x: f64) -> String {
+            let sci = format!("{x:e}");
+            let (m, _) = sci.split_once('e').unwrap();
+            let m = m.strip_prefix('-').unwrap_or(m);
+            let n = m.chars().filter(char::is_ascii_digit).count();
+            let (digits, exp) = round_half_even(x.abs(), n);
+            let mut out = String::new();
+            layout(&mut out, if x < 0.0 { "-" } else { "" }, &digits, exp);
+            out
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..200_000 {
+            let x = f64::from_bits(next());
+            if x.is_finite() && x != 0.0 {
+                assert_eq!(py_repr(x), exact(x), "{x:e}");
+            }
+            let y = f64::from(f32::from_bits(next() as u32));
+            if y.is_finite() && y != 0.0 {
+                assert_eq!(py_repr(y), exact(y), "{y:e}");
+            }
+        }
     }
 }

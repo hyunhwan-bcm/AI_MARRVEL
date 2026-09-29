@@ -18,7 +18,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use crate::pandas::py_float;
-use crate::pdread::{read_table, Table};
+use crate::pdread::{read_chunked, read_table, Table};
 use crate::pyobj::{Col, Py};
 
 fn invalid(msg: impl Into<String>) -> io::Error {
@@ -230,41 +230,52 @@ struct Dgv {
 
 impl Dgv {
     fn read(path: &Path) -> io::Result<Dgv> {
-        let t = read_table(reader(path)?, ',', 0, Some(&["#0", "#1", "#2", "subType"]))?;
-        let (chr, start, stop, sub) = (t.col("#0")?, t.col("#1")?, t.col("#2")?, t.col("subType")?);
         let mut by_chr: HashMap<i64, Vec<(i64, i64, usize, bool)>> = HashMap::new();
-        for i in 0..t.n_rows {
-            // fillna(0); Chr: X -> 23, Y -> 24, MT -> 25, GL.* -> 26; astype(int)
-            let c = match &chr.vals[i] {
-                v if v.is_na() => 0,
-                Py::Str(s) if s == "X" => 23,
-                Py::Str(s) if s == "Y" => 24,
-                Py::Str(s) if s == "MT" => 25,
-                Py::Str(s) if s.contains("GL") => 26,
-                Py::Str(s) => py_int(s)?,
-                v => v
-                    .as_f64()
-                    .map(|f| f as i64)
-                    .ok_or_else(|| invalid("DGV Chr"))?,
-            };
-            let int = |v: &Py| -> io::Result<i64> {
-                if v.is_na() {
-                    return Ok(0);
+        let mut i = 0usize;
+        // chunk by chunk: only values are used, so the table is never held
+        read_chunked(
+            reader(path)?,
+            ',',
+            0,
+            &["#0", "#1", "#2", "subType"],
+            |cols| {
+                let (chr, start, stop, sub) = (&cols[0], &cols[1], &cols[2], &cols[3]);
+                for r in 0..chr.len() {
+                    // fillna(0); Chr: X -> 23, Y -> 24, MT -> 25, GL.* -> 26; astype(int)
+                    let c = match &chr[r] {
+                        v if v.is_na() => 0,
+                        Py::Str(s) if s == "X" => 23,
+                        Py::Str(s) if s == "Y" => 24,
+                        Py::Str(s) if s == "MT" => 25,
+                        Py::Str(s) if s.contains("GL") => 26,
+                        Py::Str(s) => py_int(s)?,
+                        v => v
+                            .as_f64()
+                            .map(|f| f as i64)
+                            .ok_or_else(|| invalid("DGV Chr"))?,
+                    };
+                    let int = |v: &Py| -> io::Result<i64> {
+                        if v.is_na() {
+                            return Ok(0);
+                        }
+                        match v {
+                            Py::Str(s) => py_int(s),
+                            v => v
+                                .as_f64()
+                                .map(|f| f as i64)
+                                .ok_or_else(|| invalid("DGV position")),
+                        }
+                    };
+                    // .values.astype('int32') for the comparison
+                    let s = int(&start[r])? as i32 as i64;
+                    let e = int(&stop[r])? as i32 as i64;
+                    let lossy = matches!(&sub[r], Py::Str(x) if x == "deletion" || x == "loss");
+                    by_chr.entry(c).or_default().push((s, e, i, lossy));
+                    i += 1;
                 }
-                match v {
-                    Py::Str(s) => py_int(s),
-                    v => v
-                        .as_f64()
-                        .map(|f| f as i64)
-                        .ok_or_else(|| invalid("DGV position")),
-                }
-            };
-            // .values.astype('int32') for the comparison
-            let s = int(&start.vals[i])? as i32 as i64;
-            let e = int(&stop.vals[i])? as i32 as i64;
-            let lossy = matches!(&sub.vals[i], Py::Str(x) if x == "deletion" || x == "loss");
-            by_chr.entry(c).or_default().push((s, e, i, lossy));
-        }
+                Ok(())
+            },
+        )?;
         Ok(Dgv { by_chr })
     }
 

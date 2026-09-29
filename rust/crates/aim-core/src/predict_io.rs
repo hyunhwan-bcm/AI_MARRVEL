@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use polars::prelude::*;
+use rayon::prelude::*;
 
 use crate::npsort::sort_values_f64;
 use crate::pandas::{py_repr, read_df};
@@ -95,40 +96,7 @@ pub fn py_repr_f32(x: f32) -> String {
     if !x.is_finite() || x == 0.0 {
         return py_repr(x as f64);
     }
-    let sci = format!("{x:e}");
-    let (mantissa, _) = sci.split_once('e').unwrap();
-    let (sign, mantissa) = mantissa
-        .strip_prefix('-')
-        .map_or(("", mantissa), |m| ("-", m));
-    let shortest = mantissa.chars().filter(char::is_ascii_digit).count();
-    // numpy's float32 repr takes the nearest shortest string, ties to even (see pandas::py_repr)
-    let (digits, exp) = crate::pandas::round_half_even(f64::from(x.abs()), shortest);
-    if (-4..16).contains(&exp) {
-        let point = exp + 1;
-        if point <= 0 {
-            format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
-        } else if point as usize >= digits.len() {
-            format!(
-                "{sign}{digits}{}.0",
-                "0".repeat(point as usize - digits.len())
-            )
-        } else {
-            let (int, frac) = digits.split_at(point as usize);
-            format!("{sign}{int}.{frac}")
-        }
-    } else {
-        let (first, rest) = digits.split_at(1);
-        let rest = if rest.is_empty() {
-            String::new()
-        } else {
-            format!(".{rest}")
-        };
-        format!(
-            "{sign}{first}{rest}e{}{:02}",
-            if exp < 0 { '-' } else { '+' },
-            exp.abs()
-        )
-    }
+    crate::pandas::py_repr_f32_nonzero(x)
 }
 
 /// Writes a float32 column as pandas does (numpy float32 repr).
@@ -167,7 +135,7 @@ fn set_rankings(t: &mut Indexed, predict: &[f32]) -> PolarsResult<()> {
 /// `run_final.py` / `predict_new.utilities.rank_patient`: default model on `<id>.matrix.txt`.
 pub fn run_final(matrix: &Indexed, booster: &Booster, identifier: &str) -> PolarsResult<Indexed> {
     let (rows, _) = matrix.features(booster.feature_names())?;
-    let predict: Vec<f32> = rows.iter().map(|r| booster.predict_proba(r)).collect();
+    let predict: Vec<f32> = rows.par_iter().map(|r| booster.predict_proba(r)).collect();
     let mut t = matrix.clone();
     t.df.with_column(f32_column("predict", &predict))?;
     let order = sort_values_f64(
@@ -205,7 +173,7 @@ pub fn extra_model(
         t.df = t.df.drop("predict")?;
     }
     let (rows, data) = t.features(booster.feature_names())?;
-    let predict: Vec<f32> = rows.iter().map(|r| booster.predict_proba(r)).collect();
+    let predict: Vec<f32> = rows.par_iter().map(|r| booster.predict_proba(r)).collect();
     // insert(loc=shape[1] - 1): before the last column
     let at = t.df.width().saturating_sub(1);
     t.df.insert_column(at, f32_column("predict", &predict))?;
@@ -251,43 +219,73 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap()
 }
 
-/// `model_interpreter.bin.create_shap_json`: `json.dumps(entries, indent=2)`.
+/// One SHAP entry of `create_shap_json` (indented as by `json.dumps(indent=2)`).
+fn shap_entry(booster: &Booster, id: &str, row: &[f32], values: &[f64]) -> String {
+    let names = booster.feature_names();
+    let contrib = booster.approx_contributions(row);
+    let mut out = String::with_capacity(8192);
+    let _ = write!(
+        out,
+        "  {{\n    \"variant_id\": {},\n    \"base_value\": {},\n",
+        json_str(id),
+        json_float(contrib[names.len()] as f64)
+    );
+    let block = |out: &mut String, key: &str, vals: &mut dyn Iterator<Item = f64>| {
+        let _ = write!(out, "    \"{key}\": {{");
+        for (j, (name, v)) in names.iter().zip(vals).enumerate() {
+            out.push_str(if j == 0 { "\n" } else { ",\n" });
+            let _ = write!(out, "      {}: {}", json_str(name), json_float(v));
+        }
+        out.push_str(if names.is_empty() { "}" } else { "\n    }" });
+    };
+    block(
+        &mut out,
+        "model_output_score",
+        &mut contrib[..names.len()].iter().map(|&c| c as f64),
+    );
+    out.push_str(",\n");
+    block(&mut out, "feature_values", &mut values.iter().copied());
+    out.push_str("\n  }");
+    out
+}
+
+/// `model_interpreter.bin.create_shap_json`: `json.dumps(entries, indent=2)`, written to `w`.
+/// Entries are computed in parallel in batches and written in order, so memory stays bounded
+/// by a batch rather than the whole file.
+pub fn write_shap_json(
+    w: &mut impl std::io::Write,
+    booster: &Booster,
+    ids: &[String],
+    rows: &[Vec<f32>],
+    data: &[Vec<f64>],
+) -> std::io::Result<()> {
+    const BATCH: usize = 4096;
+    w.write_all(b"[")?;
+    for start in (0..ids.len()).step_by(BATCH) {
+        let end = (start + BATCH).min(ids.len());
+        let parts: Vec<String> = (start..end)
+            .into_par_iter()
+            .with_min_len(64)
+            .map(|k| shap_entry(booster, &ids[k], &rows[k], &data[k]))
+            .collect();
+        for (k, p) in parts.iter().enumerate() {
+            w.write_all(if start + k == 0 { b"\n" } else { b",\n" })?;
+            w.write_all(p.as_bytes())?;
+        }
+    }
+    w.write_all(if ids.is_empty() { b"]" } else { b"\n]" })
+}
+
+/// [`write_shap_json`] into a string.
 pub fn shap_json(
     booster: &Booster,
     ids: &[String],
     rows: &[Vec<f32>],
     data: &[Vec<f64>],
 ) -> String {
-    let names = booster.feature_names();
-    let mut out = String::from("[");
-    for (k, (id, (row, values))) in ids.iter().zip(rows.iter().zip(data)).enumerate() {
-        let contrib = booster.approx_contributions(row);
-        out.push_str(if k == 0 { "\n" } else { ",\n" });
-        let _ = write!(
-            out,
-            "  {{\n    \"variant_id\": {},\n    \"base_value\": {},\n",
-            json_str(id),
-            json_float(contrib[names.len()] as f64)
-        );
-        let block = |out: &mut String, key: &str, vals: &mut dyn Iterator<Item = f64>| {
-            let _ = write!(out, "    \"{key}\": {{");
-            for (j, (name, v)) in names.iter().zip(vals).enumerate() {
-                out.push_str(if j == 0 { "\n" } else { ",\n" });
-                let _ = write!(out, "      {}: {}", json_str(name), json_float(v));
-            }
-            out.push_str(if names.is_empty() { "}" } else { "\n    }" });
-        };
-        block(
-            &mut out,
-            "model_output_score",
-            &mut contrib[..names.len()].iter().map(|&c| c as f64),
-        );
-        out.push_str(",\n");
-        block(&mut out, "feature_values", &mut values.iter().copied());
-        out.push_str("\n  }");
-    }
-    out.push_str(if ids.is_empty() { "]" } else { "\n]" });
-    out
+    let mut out = Vec::new();
+    write_shap_json(&mut out, booster, ids, rows, data).expect("writing to memory");
+    String::from_utf8(out).expect("JSON is UTF-8")
 }
 
 #[cfg(test)]

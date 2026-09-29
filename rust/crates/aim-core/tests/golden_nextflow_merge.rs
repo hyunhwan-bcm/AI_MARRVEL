@@ -20,7 +20,7 @@ fn check(run: &str) {
     let stats = FeatureStats::parse(
         &std::fs::read_to_string(refs_dir().join("annotate/feature_stats.csv")).unwrap(),
     );
-    let got = feature_engineering(&scores, &tier, &stats).unwrap();
+    let got = feature_engineering(scores, &tier, &stats).unwrap();
     let want = Table::read(&dir.join("matrix.txt"), '\t');
 
     let row_of: std::collections::HashMap<&str, usize> = got
@@ -75,7 +75,7 @@ fn check_matrix(run: &str, refs: &MergeRefs) {
     let scores = Frame::read_path(dir.join("scores.txt.gz"), b'\t').unwrap();
     let tier = Frame::read_path(dir.join("Tier.v2.tsv"), b'\t').unwrap();
     let phrank = std::fs::read_to_string(dir.join("phrank.txt")).unwrap();
-    let got = post_process(&scores, &tier, &phrank, refs).unwrap();
+    let got = post_process(scores, &tier, &phrank, refs).unwrap();
     let want = Table::read(&dir.join("matrix.txt"), '\t');
     assert_eq!(got.columns, want.header, "{run}: matrix columns/order");
     let want_ids: Vec<&str> = want.rows.iter().map(|(id, _)| id.as_str()).collect();

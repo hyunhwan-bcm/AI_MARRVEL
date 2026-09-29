@@ -350,7 +350,7 @@ impl GeneLocations {
                 .push((end, start, symbol.to_owned()));
         }
         for v in by_start.values_mut().chain(by_end.values_mut()) {
-            v.sort();
+            v.sort_unstable();
         }
         Ok(GeneLocations { by_start, by_end })
     }

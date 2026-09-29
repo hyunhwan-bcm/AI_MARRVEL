@@ -8,6 +8,7 @@ version.workspace = true
 [dependencies]
 flate2 = "1.1"
 polars = { version = "0.55.2", default-features = false, features = ["csv", "lazy", "decompress", "dtype-full"] }
+rayon = "1.12"
 serde = { version = "1", features = ["derive"] }
 # CPython's str hash (SipHash-2-4), for phrank's set iteration order; already a Polars dependency
 siphasher = "1"

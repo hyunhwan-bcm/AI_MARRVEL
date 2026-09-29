@@ -71,7 +71,7 @@ pub struct MergeRefs {
 
 /// Returns the matrix as `post_processing.py` writes it (index = variant id).
 pub fn post_process(
-    scores: &Frame,
+    scores: Frame,
     tier: &Frame,
     phrank_text: &str,
     refs: &MergeRefs,

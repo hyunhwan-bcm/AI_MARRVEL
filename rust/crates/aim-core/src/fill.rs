@@ -393,11 +393,12 @@ enum Work {
     Str(Vec<String>),
 }
 
-pub fn feature_engineering(scores: &Frame, tier: &Frame, stats: &FeatureStats) -> R<Table> {
+pub fn feature_engineering(mut scores: Frame, tier: &Frame, stats: &FeatureStats) -> R<Table> {
     let n = scores.n_rows();
+    // the columns are moved out: the merged table is not used afterwards
     let mut cells: HashMap<&str, Vec<Cell>> = VARIABLE_NAME
         .iter()
-        .map(|&name| (name, scores.col(name).clone()))
+        .map(|&name| (name, scores.take_col(name)))
         .collect();
 
     // varId: strip "_-..." (intergenic suffix), then fillna("-") on every column.

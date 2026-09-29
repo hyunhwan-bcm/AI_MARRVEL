@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use polars::prelude::*;
+use rayon::prelude::*;
 
 use crate::npsort::{sort_index_str, sort_values_f64, stable_sort_values_f64};
 use crate::predict_io::{Indexed, ModelOutput};
@@ -229,7 +230,7 @@ pub fn recessive_model(
         t.df = t.df.drop("predict")?;
     }
     let (rows, data) = t.features(booster.feature_names())?;
-    let predict: Vec<f32> = rows.iter().map(|r| booster.predict_proba(r)).collect();
+    let predict: Vec<f32> = rows.par_iter().map(|r| booster.predict_proba(r)).collect();
     let at = t.df.width().saturating_sub(1);
     t.df.insert_column(
         at,

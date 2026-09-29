@@ -73,6 +73,16 @@ def copy_unchanged(data, out):
         print(f"copied {rel}")
 
 
+def link_annotate(data, out):
+    """feature.py's gene tables and DGV (large; linked, not copied)."""
+    for r in ("hg19", "hg38"):
+        dst = out / "annotate" / f"anno_{r}"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            dst.symlink_to((data / "annotate" / f"anno_{r}").resolve())
+        print(f"linked annotate/anno_{r}")
+
+
 # omim_annotate/<ref>/genemap2_pheno.tsv comes from the RDS: rust/tools/export_genemap.R
 
 
@@ -80,3 +90,4 @@ if __name__ == "__main__":
     data, out = Path(sys.argv[1]), Path(sys.argv[2])
     export_diffusion(data, out)
     copy_unchanged(data, out)
+    link_annotate(data, out)

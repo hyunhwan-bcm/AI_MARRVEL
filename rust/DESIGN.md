@@ -93,6 +93,20 @@ Rust port are added next to the originals, never in place of them.
   the patient file (R drops or merges terms depending on where it falls); `aim` warns instead.
   Duplicate OBO term ids are an error (R merges them).
 
+- `feature.py` (ANNOTATE_BY_MODULES), reproduced as is for `v1`:
+  - DECIPHER never matches: `(chrom, start, stop) in decipherSortedDf` tests column names, not
+    the index, so `decipherVarFound` is always 0 (DECIPHER is not even read by the port).
+  - `omim_alleric_variants.json` (35 MB) is loaded but never used.
+  - `clinVarSymMatchFlag` is set on a row copy (`iterrows`) and never copied back: always 0 in
+    `scores.csv`; only `curationScoreClinVar` sees it.
+  - `clinvarCurate` recomputes `curationScoreHGMD`, overwriting `hgmdCurate`'s value.
+  - The hg19 gene tables are used for hg38 as well.
+- pandas types a column in chunks of rows (`low_memory`): 2,048 rows for VEP's 459 columns. A
+  chunk with any non-numeric value keeps that chunk's original text; a numeric chunk is
+  re-parsed with pandas' lossy parser and re-printed. So how a VEP number appears in
+  `scores.csv` depends on the other values within its 2,048-row block. The port reproduces
+  this (`pdread`), verified against `feature.py` on a 15,216-row table (8 chunks).
+
 ## Open items
 
 - Training data (per-patient annotated files, pre-fill) for `v2` retraining.

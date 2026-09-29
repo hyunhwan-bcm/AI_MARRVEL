@@ -516,6 +516,15 @@ process ANNOTATE_BY_MODULES {
     path "${vep.baseName}_scores.csv", emit: scores
 
     script:
+    if (params.rust)
+    """
+    ${params.aim_bin} features $vep \\
+        --omim-sim ${omim_sim} --hgmd-sim ${hgmd_sim} \\
+        --annotate ${ref_annot_dir} --genome-ref ${params.ref_ver} \\
+        ${params.impact_filter ? "--enable-lit" : ""} \\
+        --out ${vep.baseName}_scores.csv
+    """
+    else
     """
     feature.py \\
         ${params.impact_filter ? "-enableLIT" : ""} \\

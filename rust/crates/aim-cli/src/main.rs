@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use aim_core::diffusion::Network;
+use aim_core::features::{features, FeatureOptions, FeatureRefs};
 use aim_core::fill::FeatureStats;
 use aim_core::join::{chrom_filter, join_phrank, ClinVarTables};
 use aim_core::pandas::{read_df, to_csv, to_csv_no_index, Frame};
@@ -67,6 +68,28 @@ enum Command {
         /// phrank/<ref>/disease_to_gene.txt
         #[arg(long)]
         disease_genes: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// ANNOTATE_BY_MODULES (feature.py -modules curate,conserve -diseaseInh AD):
+    /// one chromosome's VEP table -> <name>_scores.csv
+    Features {
+        /// VEP tab output for one chromosome
+        vep: PathBuf,
+        /// <id>.omim_sim.tsv (HPO_SIM)
+        #[arg(long)]
+        omim_sim: PathBuf,
+        /// <id>.hgmd_sim.tsv (HPO_SIM)
+        #[arg(long)]
+        hgmd_sim: PathBuf,
+        /// the annotate/ reference directory (anno_hg19/, anno_hg38/)
+        #[arg(long)]
+        annotate: PathBuf,
+        #[arg(long)]
+        genome_ref: String,
+        /// feature.py -enableLIT (params.impact_filter)
+        #[arg(long)]
+        enable_lit: bool,
         #[arg(long)]
         out: PathBuf,
     },
@@ -287,6 +310,23 @@ fn run(cli: Cli) -> Result<()> {
             let hpo = first_fields(&fs::read_to_string(&hpo)?);
             let ranked = p.rank_genes(&genes.into_iter().collect(), &hpo);
             write_text(&out, &phrank_text(&ranked))?;
+        }
+        Command::Features {
+            vep,
+            omim_sim,
+            hgmd_sim,
+            annotate,
+            genome_ref,
+            enable_lit,
+            out,
+        } => {
+            let refs = FeatureRefs::read(&annotate, &genome_ref)?;
+            let opts = FeatureOptions {
+                genome_ref: &genome_ref,
+                enable_lit,
+            };
+            let text = features(&vep, &omim_sim, &hgmd_sim, &refs, &opts)?;
+            write_text(&out, &text)?;
         }
         Command::HpoSim {
             hpo,

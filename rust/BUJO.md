@@ -89,3 +89,14 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - o Merged #49 into fork `main`
 - × Review of #50: no blocking issues (formatting matched R on 1.4M doubles, OBO tags on 61,743 lines, 51 clean fuzz cases byte-identical); fixed blank HGMD fields and `read.table` column wrapping
   - – unmatched quotes in the patient file: R drops/merges terms erratically — `aim` warns instead (documented)
+
+## 2026-09-29 (Tue, later)
+
+- o Merged #49, #50, #51 into fork `main`; status report printed
+- × ANNOTATE_BY_MODULES (`feature.py`) in Rust (`aim features`) — the main goal of this phase
+  - – `scores.csv` byte-identical on all 25 pipeline files (23 ClinVar-sample chromosomes, fixture, gnomAD-fix run)
+  - – and against `feature.py` itself on derived inputs: 15,216 rows (8 chunks), `-enableLIT`, numeric chunks, hg19 DGV, non-empty HGMD (all curation levels)
+  - ! pandas types columns per 2,048-row chunk: a VEP number's printed form depends on its neighbours — reproduced (`pdread`)
+  - ! DECIPHER never matches; OMIM allele file unused; `clinVarSymMatchFlag` always 0 (documented, reproduced)
+  - – 15,216 rows: 36 s / 1.2 GB (Python) → 1.4 s / 322 MB
+- < Optimization review of all `aim` subcommands (running)

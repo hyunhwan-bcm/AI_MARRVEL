@@ -86,3 +86,6 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - ! R's `formatReal` scales in double on arm64 but 80-bit long double on x86-64: a last digit can differ on Linux (documented)
   - – genemap2 is an RDS: exported once to TSV (`export_genemap.R`); no R at run time with `--rust`
   - – 5.31 s / 575 MB (R) → 0.22 s / 141 MB
+- o Merged #49 into fork `main`
+- × Review of #50: no blocking issues (formatting matched R on 1.4M doubles, OBO tags on 61,743 lines, 51 clean fuzz cases byte-identical); fixed blank HGMD fields and `read.table` column wrapping
+  - – unmatched quotes in the patient file: R drops/merges terms erratically — `aim` warns instead (documented)

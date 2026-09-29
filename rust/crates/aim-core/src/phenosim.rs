@@ -279,18 +279,75 @@ impl<'a> PatientSim<'a> {
 }
 
 /// `read.table(PATIENT_HPO, sep = "\t", fill = T, header = F)$V1`, then `grepl("HP:", HPO)`.
+///
+/// As `scan()` reads it: `"` and `'` quote (anywhere in a field, across lines), `#` starts a
+/// comment, blank lines are skipped, the column count is the widest of the first 5 records and
+/// longer records wrap onto further rows (`fill = TRUE`), each row contributing its first field.
+///
+/// An unmatched quote (e.g. `HP:0001250\tParkinson's`) is not reproduced: R's result then
+/// depends on how `readTableHead` and `scan` split the first lines (terms can be dropped or
+/// merged), so a warning is printed instead.
 pub fn patient_terms(text: &str) -> Vec<String> {
-    text.lines()
-        .map(|l| l.strip_suffix('\r').unwrap_or(l))
-        .map(|l| &l[..l.find('#').unwrap_or(l.len())]) // comment.char = "#"
-        .filter(|l| !l.trim().is_empty()) // blank.lines.skip
-        .map(|l| {
-            let f = l.split('\t').next().unwrap_or("");
-            let unquoted = ['"', '\'']
-                .iter()
-                .find_map(|&q| f.strip_prefix(q).and_then(|s| s.strip_suffix(q)));
-            unquoted.unwrap_or(f).to_owned()
-        })
+    if text.contains(['"', '\'']) {
+        eprintln!(
+            "aim: warning: quote characters in the patient HPO file; R's read.table may read \
+             these lines differently (keep one HPO id per line)"
+        );
+    }
+    let mut records: Vec<Vec<String>> = Vec::new();
+    let (mut fields, mut field) = (Vec::<String>::new(), String::new());
+    let (mut quote, mut comment, mut any) = (None::<char>, false, false);
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            } else {
+                field.push(c);
+            }
+            continue;
+        }
+        match c {
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\n' => {
+                if any {
+                    fields.push(std::mem::take(&mut field));
+                    records.push(std::mem::take(&mut fields));
+                }
+                field.clear();
+                fields.clear();
+                (comment, any) = (false, false);
+            }
+            _ if comment => {}
+            '#' => comment = true,
+            '\t' => {
+                fields.push(std::mem::take(&mut field));
+                any = true;
+            }
+            '"' | '\'' => {
+                quote = Some(c);
+                any = true;
+            }
+            _ => {
+                field.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        fields.push(field);
+        records.push(fields);
+    }
+    let ncol = records
+        .iter()
+        .take(5)
+        .map(Vec::len)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    records
+        .iter()
+        .flat_map(|r| r.chunks(ncol).map(|row| row[0].clone()))
         .filter(|v| v != "NA" && v.contains("HP:"))
         .collect()
 }
@@ -313,15 +370,17 @@ fn r_lgl(v: &str) -> Option<bool> {
 }
 
 impl RCol {
+    /// `values`: `None` for `NA`, `Some("")` for a blank field. Blanks are missing in logical
+    /// and numeric columns and stay empty strings in character columns.
     fn convert(values: Vec<Option<String>>) -> RCol {
-        let present = || values.iter().flatten();
+        let present = || values.iter().flatten().filter(|v| !v.is_empty());
+        let values_na = || {
+            values
+                .iter()
+                .map(|v| v.as_deref().filter(|v| !v.is_empty()))
+        };
         if present().all(|v| r_lgl(v).is_some()) {
-            return RCol::Lgl(
-                values
-                    .iter()
-                    .map(|v| v.as_deref().and_then(r_lgl))
-                    .collect(),
-            );
+            return RCol::Lgl(values_na().map(|v| v.and_then(r_lgl)).collect());
         }
         let int = |v: &str| {
             (!v.contains(['.', 'e', 'E', 'x', 'X']))
@@ -329,13 +388,12 @@ impl RCol {
                 .flatten()
         };
         if present().all(|v| int(v).is_some()) {
-            return RCol::Int(values.iter().map(|v| v.as_deref().and_then(int)).collect());
+            return RCol::Int(values_na().map(|v| v.and_then(int)).collect());
         }
         if present().all(|v| v.trim().parse::<f64>().is_ok()) {
             return RCol::Dbl(
-                values
-                    .iter()
-                    .map(|v| v.as_deref().map(|v| v.trim().parse().unwrap()))
+                values_na()
+                    .map(|v| v.map(|v| v.trim().parse().unwrap()))
                     .collect(),
             );
         }
@@ -403,7 +461,9 @@ fn read_tsv(text: &str, what: &str) -> io::Result<(Vec<String>, Vec<RCol>)> {
             return Err(invalid(format!("{what}: more fields than header names")));
         }
         for (j, c) in cols.iter_mut().enumerate() {
-            c.push(f.get(j).filter(|v| **v != "NA").map(|v| (*v).to_owned()));
+            // fill = TRUE: a missing field is blank
+            let v = f.get(j).copied().unwrap_or("");
+            c.push((v != "NA").then(|| v.to_owned()));
         }
     }
     Ok((header, cols.into_iter().map(RCol::convert).collect()))
@@ -709,5 +769,25 @@ mod tests {
         let x = [Some(2.0), Some(1.0), None, Some(2.0)];
         let y = [Some(1.0), Some(2.0), Some(3.0)];
         assert_eq!(r_merge_inner(&x, &y), vec![(1, 0), (0, 1), (3, 1)]);
+    }
+
+    #[test]
+    fn patient_file_like_read_table() {
+        // R 4.4 result for this file. Blank line and comment skipped; the first 5 records are at
+        // most 2 wide, so the later 3-field record wraps and HP:0000004 becomes a row of its own.
+        let text = "HP:0000001\tname\n\n# note\nHP:0000002\nHP:0000003\nHP:0000005\n\
+                    HP:0000006\nHP:0000007\tx\tHP:0000004\nNA\n";
+        assert_eq!(
+            patient_terms(text),
+            [
+                "HP:0000001",
+                "HP:0000002",
+                "HP:0000003",
+                "HP:0000005",
+                "HP:0000006",
+                "HP:0000007",
+                "HP:0000004"
+            ]
+        );
     }
 }

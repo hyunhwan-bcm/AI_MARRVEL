@@ -85,7 +85,13 @@ Rust port are added next to the originals, never in place of them.
   80-bit long double on x86-64 Linux, where a last digit can differ (e.g. `0.32398886838473` vs
   `0.323988868384731`). Values agree to ~1e-15 either way. The genemap2 table is read from an
   RDS file, exported once to TSV with `rust/tools/export_genemap.R`, so the `--rust` pipeline
-  needs no R at run time.
+  needs no R at run time. That export is not a Nextflow input: after updating the data bucket,
+  re-run `export_genemap.R` (and use a clean run rather than `-resume`).
+- HPO_SIM input quirks reproduced from `read.table`: blank HGMD fields are `NA` in numeric
+  columns and empty strings in text columns; patient files are split into columns by the widest
+  of the first 5 lines, and longer lines wrap. Not reproduced: an unmatched quote character in
+  the patient file (R drops or merges terms depending on where it falls); `aim` warns instead.
+  Duplicate OBO term ids are an error (R merges them).
 
 ## Open items
 

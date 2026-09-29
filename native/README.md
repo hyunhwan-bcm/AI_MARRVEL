@@ -3,11 +3,11 @@
 Runs AIM v1.1.3 on macOS/Linux with [pixi](https://pixi.sh) environments that mirror the
 production images, so its outputs can serve as the reference for the Rust port.
 
-| pixi env | mirrors | notes |
-|---|---|---|
-| `py` (+ `tools`) | `zhandongliulab/aim-lite:1.2` | Python 3.8.20 and the image's `pip freeze`; bcftools 1.20, GNU coreutils/sed/find/grep/gawk |
-| `r` | `zhandongliulab/aim-lite-r` | R 4.4.2, dplyr 1.1.4, ontologyIndex 2.12, ontologySimilarity 2.7 (built from CRAN) |
-| `vep` | `ensemblorg/ensembl-vep:release_104.3` | VEP code extracted from the image, run on native perl 5.32 |
+| pixi env         | mirrors                                | notes                                                                                       |
+| ---------------- | -------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `py` (+ `tools`) | `zhandongliulab/aim-lite:1.2`          | Python 3.8.20 and the image's `pip freeze`; bcftools 1.20, GNU coreutils/sed/find/grep/gawk |
+| `r`              | `zhandongliulab/aim-lite-r`            | R 4.4.2, dplyr 1.1.4, ontologyIndex 2.12, ontologySimilarity 2.7 (built from CRAN)          |
+| `vep`            | `ensemblorg/ensembl-vep:release_104.3` | VEP code extracted from the image, run on native perl 5.32                                  |
 
 Known differences from the images (all reviewed as output-neutral for AIM, to be confirmed on a
 container run): bedtools 2.31.1 (image 2.30.0), data.table 1.16.4 (1.16.2), numexpr 2.8.4 (2.8.6),

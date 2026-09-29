@@ -13,14 +13,14 @@ change is additive and opt-in until retrained models have been validated.
 
 ## Feature sets: `v1` default, `v2` placeholder
 
-| | `v1` (default) | `v2` (placeholder, opt-in) |
-|---|---|---|
-| Missing scores | Filled exactly as `bin/fillna_tier.py` does (per-sample mean/median/min/max, row-weighted) | Left missing; XGBoost routes them with its learned default direction |
-| Network score (`diffuse_Phrank_STRING`) | Percentile rank among the sample's rows | Raw diffused heat |
-| Variant type | Implicit (indel vs SNV fill values) | Explicit feature from VEP `VARIANT_CLASS` |
-| Same-gene tier / recessive pairs | Kept | Kept (separate gene-level pass) |
-| Derived features (`conservationScore*`, `curationScore*`, ...) | Kept | Kept for now; pruning decided after retraining |
-| Models | Current `model_inputs/*` (unchanged) | None yet — requires retraining |
+|                                                                | `v1` (default)                                                                             | `v2` (placeholder, opt-in)                                           |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| Missing scores                                                 | Filled exactly as `bin/fillna_tier.py` does (per-sample mean/median/min/max, row-weighted) | Left missing; XGBoost routes them with its learned default direction |
+| Network score (`diffuse_Phrank_STRING`)                        | Percentile rank among the sample's rows                                                    | Raw diffused heat                                                    |
+| Variant type                                                   | Implicit (indel vs SNV fill values)                                                        | Explicit feature from VEP `VARIANT_CLASS`                            |
+| Same-gene tier / recessive pairs                               | Kept                                                                                       | Kept (separate gene-level pass)                                      |
+| Derived features (`conservationScore*`, `curationScore*`, ...) | Kept                                                                                       | Kept for now; pruning decided after retraining                       |
+| Models                                                         | Current `model_inputs/*` (unchanged)                                                       | None yet — requires retraining                                       |
 
 How the placeholder works:
 

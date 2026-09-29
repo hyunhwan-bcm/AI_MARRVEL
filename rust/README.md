@@ -16,6 +16,6 @@ pixi run -e py python3.8 rust/tools/export_models.py <data>/model_inputs rust/mo
 cd rust && cargo test --release -- --include-ignored
 ```
 
-| Crate | Contents |
-|---|---|
+| Crate      | Contents                                                                                                                    |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `aim-core` | XGBoost `binary:logistic` evaluation and approximate SHAP (bit-identical to xgboost 2.1.4), percentile confidence, rankings |

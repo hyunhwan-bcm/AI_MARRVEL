@@ -18,12 +18,13 @@ cd rust && cargo test --release -- --include-ignored
 
 ## Running the pipeline with the Rust steps
 
-`--rust true` swaps PHRANK_SCORING, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION for
+`--rust true` swaps PHRANK_SCORING, HPO_SIM, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION for
 the `aim` binary (default off; the other steps are unchanged):
 
 ```bash
 cargo build --release                    # rust/target/release/aim
 pixi run -e py python3.8 rust/tools/export_refs.py <data> rust/refs
+pixi run -e r Rscript rust/tools/export_genemap.R <data> rust/refs   # genemap2 RDS -> TSV
 nextflow run main.nf ... --rust true --aim_bin $PWD/rust/target/release/aim \
     --rust_refs $PWD/rust/refs --rust_models $PWD/rust/models
 ```
@@ -34,4 +35,4 @@ the merged row order follows Nextflow's chromosome completion order in both vers
 | Crate      | Contents                                                                                                                                                                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `aim-core` | XGBoost `binary:logistic` evaluation (bit-identical to xgboost 2.1.4) and approximate SHAP (bit-identical to the osx-arm64 wheel; the x86-64 Linux wheel used in production differs by a few float32 ulps), percentile confidence, rankings |
-| `aim-cli`  | `aim` binary: `phrank`, `join-phrank`, `tier`, `merge`, `predict` (one subcommand per Nextflow process)                                                                                                                                     |
+| `aim-cli`  | `aim` binary: `phrank`, `hpo-sim`, `join-phrank`, `tier`, `merge`, `predict` (one subcommand per Nextflow process)                                                                                                                          |

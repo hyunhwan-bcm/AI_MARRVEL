@@ -249,7 +249,7 @@ fn by_gene<T>(rows: Vec<T>, gene: impl Fn(&T) -> &str) -> Vec<(String, Vec<T>)> 
 }
 
 /// R's `isort_with_index` (src/main/sort.c): Shell sort of `x` carrying `indx`, not stable.
-fn r_isort_with_index(x: &mut [i64], indx: &mut [usize]) {
+pub(crate) fn r_isort_with_index(x: &mut [i64], indx: &mut [usize]) {
     let n = x.len();
     let mut h = 1;
     while h <= n / 9 {

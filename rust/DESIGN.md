@@ -80,6 +80,13 @@ Rust port are added next to the originals, never in place of them.
   bisection stopped even without a match, plus neighbours with the same coordinate. The gene
   list therefore contains genes near, not at, a variant. Reproduced as is for `v1`.
 
+- HPO_SIM (`phenoSim.R`) prints similarities with R's `formatReal`, whose 15-digit scaling is
+  platform dependent: in double arithmetic on arm64 macOS (ported, byte-identical there), in
+  80-bit long double on x86-64 Linux, where a last digit can differ (e.g. `0.32398886838473` vs
+  `0.323988868384731`). Values agree to ~1e-15 either way. The genemap2 table is read from an
+  RDS file, exported once to TSV with `rust/tools/export_genemap.R`, so the `--rust` pipeline
+  needs no R at run time.
+
 ## Open items
 
 - Training data (per-patient annotated files, pre-fill) for `v2` retraining.

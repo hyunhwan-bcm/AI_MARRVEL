@@ -85,7 +85,7 @@
         },
         "rust": {
           "type": "boolean",
-          "description": "Run PHRANK_SCORING, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION with the Rust `aim` binary (see rust/README.md)."
+          "description": "Run PHRANK_SCORING, HPO_SIM, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION with the Rust `aim` binary (see rust/README.md)."
         },
         "aim_bin": {
           "type": "string",

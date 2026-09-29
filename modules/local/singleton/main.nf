@@ -379,6 +379,18 @@ process HPO_SIM {
     path "${params.run_id}-dx", emit: omim_sim
 
     script:
+    if (params.rust)
+    """
+    cp $hpo input.copied.hpos.txt
+    if [[ -z \$(egrep 'HP:[0-9]{7}' $hpo) ]] ; then
+        echo "HP:0000001" > input.copied.hpos.txt
+    fi
+
+    ${params.aim_bin} hpo-sim input.copied.hpos.txt --hgmd $omim_hgmd_phen --obo $omim_obo \\
+        --genemap ${params.rust_refs}/omim_annotate/${params.ref_ver}/genemap2_pheno.tsv \\
+        --omim-pheno $omim_pheno --out-cz ${params.run_id}-cz --out-dx ${params.run_id}-dx
+    """
+    else
     """
     cp $hpo input.copied.hpos.txt
     if [[ -z \$(egrep 'HP:[0-9]{7}' $hpo) ]] ; then

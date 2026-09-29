@@ -58,7 +58,9 @@ def export_diffusion(data, out):
 
 def copy_unchanged(data, out):
     files = ["annotate/feature_stats.csv"]
+    files.append("omim_annotate/hp.obo")
     for r in ("hg19", "hg38"):
+        files += [f"omim_annotate/{r}/HPO_OMIM.tsv", f"omim_annotate/{r}/HGMD_phen.tsv"]
         files.append(f"merge_expand/{r}/simpleRepeats.{r}.bed")
         files += [f"merge_expand/{r}/{t}.tsv.gz" for t in ("clin_c", "clin_nc", "hgmd_c", "hgmd_nc")]
         files.append(f"var_tier/{r}/genemap2.Inh.F.txt")
@@ -69,6 +71,9 @@ def copy_unchanged(data, out):
         (out / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(data / rel, out / rel)
         print(f"copied {rel}")
+
+
+# omim_annotate/<ref>/genemap2_pheno.tsv comes from the RDS: rust/tools/export_genemap.R
 
 
 if __name__ == "__main__":

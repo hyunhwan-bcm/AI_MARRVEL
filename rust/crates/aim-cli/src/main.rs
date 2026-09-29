@@ -11,6 +11,7 @@ use aim_core::diffusion::Network;
 use aim_core::fill::FeatureStats;
 use aim_core::join::{chrom_filter, join_phrank, ClinVarTables};
 use aim_core::pandas::{read_df, to_csv, to_csv_no_index, Frame};
+use aim_core::phenosim::{hgmd_cz, omim_dx, patient_terms, Genemap, Ontology, PatientSim};
 use aim_core::phrank::{
     first_fields, genes_via_symbols, phrank_text, vcf_variants, GeneLocations, Phrank,
 };
@@ -66,6 +67,27 @@ enum Command {
         disease_genes: PathBuf,
         #[arg(long)]
         out: PathBuf,
+    },
+    /// HPO_SIM (phenoSim.R): patient HPO terms -> <id>-cz (HGMD) and <id>-dx (OMIM) similarities
+    HpoSim {
+        /// patient HPO terms (the process's input.copied.hpos.txt)
+        hpo: PathBuf,
+        /// omim_annotate/<ref>/HGMD_phen.tsv
+        #[arg(long)]
+        hgmd: PathBuf,
+        /// omim_annotate/hp.obo
+        #[arg(long)]
+        obo: PathBuf,
+        /// omim_annotate/<ref>/genemap2_pheno.tsv (rust/tools/export_genemap.R)
+        #[arg(long)]
+        genemap: PathBuf,
+        /// omim_annotate/<ref>/HPO_OMIM.tsv
+        #[arg(long)]
+        omim_pheno: PathBuf,
+        #[arg(long)]
+        out_cz: PathBuf,
+        #[arg(long)]
+        out_dx: PathBuf,
     },
     /// ANNOTATE_TIER (VarTierDiseaseDBFalse.R): scores.csv -> Tier.v2.tsv
     Tier {
@@ -263,6 +285,24 @@ fn run(cli: Cli) -> Result<()> {
             let hpo = first_fields(&fs::read_to_string(&hpo)?);
             let ranked = p.rank_genes(&genes.into_iter().collect(), &hpo);
             write_text(&out, &phrank_text(&ranked))?;
+        }
+        Command::HpoSim {
+            hpo,
+            hgmd,
+            obo,
+            genemap,
+            omim_pheno,
+            out_cz,
+            out_dx,
+        } => {
+            let onto = Ontology::parse(&fs::read_to_string(&obo)?)?;
+            let patient = patient_terms(&fs::read_to_string(&hpo)?);
+            let sim = PatientSim::new(&onto, &patient)?;
+            let cz = hgmd_cz(&sim, &onto, &fs::read_to_string(&hgmd)?)?;
+            write_text(&out_cz, &cz)?;
+            let genemap = Genemap::parse(&fs::read_to_string(&genemap)?)?;
+            let dx = omim_dx(&sim, &onto, &fs::read_to_string(&omim_pheno)?, &genemap)?;
+            write_text(&out_dx, &dx)?;
         }
         Command::Tier {
             scores,

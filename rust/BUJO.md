@@ -59,7 +59,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – Python repr breaks exact 17-digit ties half-to-even; Rust's shortest formatter didn't — fixed
 - × Review of #45/#46: readr samples 999 spaced rows + last (fixed); float32/f64 repr ties half-even at any length; `sort_index` no-op when sorted
 - × PREDICTION I/O (part 2): expanded matrix, recessive pairs, recessive + nd_recessive — all files match both runs; SHAP identical
-- > phrank chain + HPO similarity (R) — phrank done below; HPO similarity next
+- > phrank chain + HPO similarity (R) — both done below
 - • Feature annotation (`feature.py`)
 - × Review of #47: no blocking issues (40 randomized samples matched Python byte for byte)
 - o Merged #45–#47 into fork `main`
@@ -80,3 +80,9 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – scores sum over a Python set: CPython 3.8 set layout + SipHash emulated → `phrank.txt` byte-identical (2 runs + 5 larger HPO sets); sorted order would change last digits
   - – `location_to_gene.py` bisection keeps a gene even without overlap — reproduced
 - × End-to-end `--rust true` with phrank: 108/108 tasks, 4 min 03 s (baseline 5 min 15 s); model outputs identical; features ≤ 6.9e-13 rel (pandas parser truncation in the baseline)
+- × Review of #49: no blocking issues (set emulation matched CPython on 1,200 random cases up to 90k entries); fixed SV alleles with `:` (the shell chain drops their genes)
+- o Merged #48 into fork `main`
+- × HPO_SIM in Rust (`aim hpo-sim`): OBO parse, descendant IC, Lin best-match average, dplyr groups, R `merge()` order, `write.table` numbers — `-dx`/`-cz` byte-identical to `phenoSim.R` (pipeline run + 3 synthetic cases incl. a non-empty HGMD table)
+  - ! R's `formatReal` scales in double on arm64 but 80-bit long double on x86-64: a last digit can differ on Linux (documented)
+  - – genemap2 is an RDS: exported once to TSV (`export_genemap.R`); no R at run time with `--rust`
+  - – 5.31 s / 575 MB (R) → 0.22 s / 141 MB

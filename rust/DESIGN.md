@@ -33,6 +33,17 @@ How the placeholder works:
   models. Until `v2` models exist, `--feature-set v2` only runs with an explicit
   "untrained placeholder" flag, and its outputs are marked as not valid for interpretation.
 
+## Libraries over hand-written code
+
+Where a Rust library does the job, use it: Polars for reading/writing tables, joins and
+group-bys (added 2026-09-29 at the user's request, despite ~340 crates and ~2 min extra
+release build). Hand-written code is limited to AIM's own rules (fill order, tier logic,
+diffusion) and to numpy details that decide exact numbers (pairwise-sum mean, linear
+median, Python float formatting). Consequence: Polars parses floats with correct rounding
+where pandas 1.4's parser can be one ulp off, so continuous features may differ from the
+pipeline by about one ulp (below float32 model resolution); discrete features and model
+outputs are still compared exactly.
+
 ## Data: nothing is deleted
 
 Lineage tracing (see discussion) found inputs that are never read, e.g. `dbNSFP4.3c_grch37.gz`,

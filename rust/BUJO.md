@@ -1,0 +1,49 @@
+# AIM Rust port — bullet journal
+
+Key: `•` task · `×` done · `>` migrated (moved later) · `<` scheduled · `–` note · `!` important · `o` event
+
+Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
+
+## Future log
+
+- • VCF preprocessing in Rust (bcftools → noodles)
+- • VEP: fastVEP behind a VEP-104 compatibility layer (optional)
+- • `v2` feature set + retraining (needs training data)
+- • Exome-scale benchmark
+
+## 2026-09-28 (Mon)
+
+- o Kick-off: port AIM v1.1.3 to Rust — less memory, fewer deps, faster, identical results
+- × Worktrees: `AI_MARRVEL-baseline` (current version), `AI_MARRVEL-rust` (port)
+- × Full data bucket download started (519 GiB)
+- × Assessed fastVEP as VEP replacement
+  - – VEP 104 lacks 3 splice terms fastVEP emits; models split on IMPACT heavily → needs compat layer
+- × Native baseline with pixi (no Docker): py/r/vep envs mirror the production images
+  - – conda `perl-db_file` segfaults on arm64 → use perl's bundled DB_File
+- × Lineage trace: input fields → features → model splits
+  - – 36 of 104 features never split on; `nc_*` ClinVar features unused but row duplication matters
+  - – ~47 GiB of data never read (kept, not deleted)
+- × Decisions: `v1` identical default, `v2` placeholder; additive only, nothing deleted
+- × Prediction stage in Rust — bit-identical (XGBoost, confidence, ranking, SHAP)
+- ! hg38 gnomAD genome index broken in the bucket (#30); rebuilt index + overlay
+- ! `hom` always 0 on hg38 (#31) — decided: keep 0, noted
+
+## 2026-09-29 (Tue)
+
+- × Baseline fixture run: 24/24 steps, 42 s warm, peak 1.5 GB
+- × `PYTHONHASHSEED=0` — phrank not reproducible run to run (#33)
+- × Fork set up: issues on, #30–#35 filed
+- × Stacked PRs #36 (fork-safe CI) → #37 (baseline) → #38 (Rust core + CI) → #39 (goldens)
+- × Prettier fixes restacked across #37–#39
+- × Diffusion ported, 1.4 GB → 15.5 MB, 3,608 scores identical (#40)
+- × CI green on #36–#38; prettier excluded from golden files (#39, #40)
+- < Bigger fixture: 1,450 ClinVar hg38 variants — baseline running
+  - – `simple_repeat` never fires on chrX: variant ids use `23`, the BED uses `X`
+- • Missing-value fill (`fillna_tier.py`) + simple repeats → full MERGE step
+- • ClinVar/HGMD region join (`add_c_nc.py`) + `generate_new_matrix_2.py` → JOIN_PHRANK
+- • Tier (`VarTierDiseaseDBFalse.R`)
+- • PREDICTION I/O: recessive pairs, expanded matrix, SHAP JSON writer
+- • phrank chain + HPO similarity (R)
+- • Feature annotation (`feature.py`)
+- • `aim` CLI + Nextflow `-profile rust` end-to-end comparison
+- • Final report artifact

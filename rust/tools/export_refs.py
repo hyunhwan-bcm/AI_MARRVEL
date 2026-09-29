@@ -9,7 +9,10 @@
                  u64 indptr[n_rows + 1], u32 indices[nnz], f32 values[nnz]
   genes.txt      cor_GeneID_arr, one Ensembl gene id per line (row/column order of net.csr)
   manifest.json  shape, nnz, sha256 of the source
+<out_dir>/annotate/feature_stats.csv                   copied unchanged
+<out_dir>/merge_expand/<ref>/simpleRepeats.<ref>.bed   copied unchanged (hg19, hg38)
 """
+import shutil
 import hashlib
 import json
 import sys
@@ -51,5 +54,15 @@ def export_diffusion(data, out):
           f"({(dst / 'net.csr').stat().st_size / 1e6:.1f} MB)")
 
 
+def copy_unchanged(data, out):
+    files = ["annotate/feature_stats.csv"] + [f"merge_expand/{r}/simpleRepeats.{r}.bed" for r in ("hg19", "hg38")]
+    for rel in files:
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(data / rel, out / rel)
+        print(f"copied {rel}")
+
+
 if __name__ == "__main__":
-    export_diffusion(Path(sys.argv[1]), Path(sys.argv[2]))
+    data, out = Path(sys.argv[1]), Path(sys.argv[2])
+    export_diffusion(data, out)
+    copy_unchanged(data, out)

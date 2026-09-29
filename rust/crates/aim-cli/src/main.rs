@@ -119,17 +119,6 @@ fn load_model(models: &Path, name: &str) -> Result<Model> {
     Ok(Model { booster, reference })
 }
 
-/// `to_csv(index=False)` of a frame whose first column is the index.
-fn without_index(text: String) -> String {
-    let mut out: String = text
-        .lines()
-        .map(|l| &l[l.find(',').map_or(0, |i| i + 1)..])
-        .collect::<Vec<_>>()
-        .join("\n");
-    out.push('\n');
-    out
-}
-
 fn predict(matrix: &Path, scores: &Path, models: &Path, id: &str, out: &Path) -> Result<()> {
     let default = load_model(models, "default")?;
     let m = Indexed::read(matrix, b'\t')?;
@@ -143,7 +132,8 @@ fn predict(matrix: &Path, scores: &Path, models: &Path, id: &str, out: &Path) ->
     let ex = expanded(&dp, &merged)?;
     write_text(
         &out.join(format!("final_matrix_expanded/{id}.expanded.csv.gz")),
-        &without_index(to_csv(&ex, ',')?),
+        // to_csv(index=False): the first column holds the index
+        &to_csv(&ex.drop(&ex.get_column_names()[0].to_string())?, ',')?,
     )?;
 
     let conf = out.join("conf_4Model");

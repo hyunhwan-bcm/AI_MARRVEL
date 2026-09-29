@@ -25,6 +25,10 @@ include {
 showVersion()
 validateParameters()
 
+if (params.rust && !(params.rust_refs && params.rust_models)) {
+    error "--rust needs --rust_refs and --rust_models (see rust/README.md)"
+}
+
 workflow {
     data = PREPARE_DATA()
     chrmap_file = data.map { it.chrmap_file }

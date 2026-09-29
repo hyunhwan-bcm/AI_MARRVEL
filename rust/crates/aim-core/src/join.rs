@@ -49,11 +49,19 @@ impl ClinVarTables {
     }
 }
 
+/// Keeps a coding row by its raw `new_chr` value.
+pub type ChromFilter = Box<dyn Fn(&str) -> bool>;
+
 /// A `new_chr` filter keeping coding rows that can join a score table: the merge keys are cast
 /// to the score's `chrom` type, so a row can only match when its raw value equals one of the
 /// score's chromosomes as text or as an integer.
-pub fn chrom_filter(score: &DataFrame) -> PolarsResult<impl Fn(&str) -> bool> {
+pub fn chrom_filter(score: &DataFrame) -> PolarsResult<ChromFilter> {
     let c = score.column("chrom")?;
+    // Other key types (e.g. float chromosomes from a column with missing values) would compare
+    // after a cast this filter doesn't model: keep every row then.
+    if !matches!(c.dtype(), DataType::Int64 | DataType::String) {
+        return Ok(Box::new(|_: &str| true));
+    }
     let text: std::collections::HashSet<String> = c
         .cast(&DataType::String)?
         .str()?
@@ -62,7 +70,9 @@ pub fn chrom_filter(score: &DataFrame) -> PolarsResult<impl Fn(&str) -> bool> {
         .map(str::to_owned)
         .collect();
     let ints: std::collections::HashSet<i64> = text.iter().filter_map(|v| v.parse().ok()).collect();
-    Ok(move |v: &str| text.contains(v) || v.parse::<i64>().is_ok_and(|i| ints.contains(&i)))
+    Ok(Box::new(move |v: &str| {
+        text.contains(v) || v.parse::<i64>().is_ok_and(|i| ints.contains(&i))
+    }))
 }
 
 /// What `pd.read_csv` would type a column as, gathered value by value.
@@ -341,7 +351,9 @@ pub fn add_c_nc(score: &DataFrame, t: &ClinVarTables) -> PolarsResult<DataFrame>
     merged = left_join(&merged, &clin, &["varId"], &["varId"], false)?;
 
     let null_f64 = |name: &str, n: usize| Column::full_null(name.into(), n, &DataType::Float64);
-    if t.hgmd_c.height() == 0 {
+    // No columns: the table file has no data rows (public HGMD). A filtered table with no rows
+    // left keeps its columns and is merged, as pandas merges a table without matches.
+    if t.hgmd_c.width() == 0 {
         let n = merged.height();
         for name in ["c_HGMD_Exp", "c_RANKSCORE", "CLASS"] {
             merged.with_column(null_f64(name, n))?;
@@ -358,7 +370,7 @@ pub fn add_c_nc(score: &DataFrame, t: &ClinVarTables) -> PolarsResult<DataFrame>
             false,
         )?;
     }
-    if t.hgmd_nc.height() == 0 {
+    if t.hgmd_nc.width() == 0 {
         let n = merged.height();
         for name in ["nc_HGMD_Exp", "nc_RANKSCORE"] {
             merged.with_column(null_f64(name, n))?;
@@ -487,5 +499,36 @@ mod tests {
         let s = Series::new("c".into(), ["NA", "x", ""]);
         let t = pandas_typed(s).unwrap();
         assert_eq!(t.null_count(), 2);
+    }
+
+    fn gz_file(name: &str, text: &str) -> std::path::PathBuf {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!("aim-join-{}-{name}", std::process::id()));
+        let mut gz = flate2::write::GzEncoder::new(
+            std::fs::File::create(&path).unwrap(),
+            flate2::Compression::fast(),
+        );
+        gz.write_all(text.as_bytes()).unwrap();
+        gz.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn filtered_tables_keep_columns_and_whole_file_types() {
+        let path = gz_file(
+            "c.tsv.gz",
+            "id\tflag\tnew_chr\n0\t7\tTRUE\t1\n1\tx\tFALSE\t2\n",
+        );
+        // Only chromosome 1 kept: `id` is still text because row 2 has "x".
+        let t = read_indexed_tsv(&path, &|c| c == "1").unwrap();
+        assert_eq!(t.height(), 1);
+        assert_eq!(t.column("id").unwrap().dtype(), &DataType::String);
+        assert_eq!(t.column("flag").unwrap().dtype(), &DataType::Boolean);
+        // No rows kept: the columns stay, so the table is still merged (not "HGMD empty").
+        let none = read_indexed_tsv(&path, &|_| false).unwrap();
+        assert_eq!((none.height(), none.width()), (0, 4));
+        // Header only: no columns.
+        let empty = read_indexed_tsv(&gz_file("e.tsv.gz", "id\tnew_chr\n"), &|_| true).unwrap();
+        assert_eq!(empty.width(), 0);
     }
 }

@@ -20,7 +20,11 @@ use aim_core::stats::{confidence_level, percentile_of_score, rank_predictions};
 use common::{golden_dir, load_model, parse, Table};
 
 /// See `golden_predict.rs`: exact on osx-arm64, a few f32 ulps elsewhere.
-const SHAP_ABS_TOL: f64 = 1e-5;
+const SHAP_ABS_TOL: f64 = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    0.0 // goldens were made with the osx-arm64 wheel: must match bit for bit
+} else {
+    1e-5
+};
 
 fn dir() -> PathBuf {
     golden_dir().join("nextflow_fixture/prediction")

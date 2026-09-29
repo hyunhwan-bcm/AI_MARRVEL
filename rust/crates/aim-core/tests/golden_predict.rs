@@ -17,7 +17,11 @@ use common::{golden_dir, load_model, parse, Table};
 /// SHAP matches bit for bit against goldens made with the osx-arm64 xgboost wheel; goldens made
 /// on a build without fused multiply-add differ by a few f32 ulps (< 1e-6 observed), so allow
 /// that. Predictions, confidence and rankings must match exactly.
-const SHAP_ABS_TOL: f64 = 1e-5;
+const SHAP_ABS_TOL: f64 = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    0.0 // goldens were made with the osx-arm64 wheel: must match bit for bit
+} else {
+    1e-5
+};
 
 fn check_model(model: &str) {
     let golden = golden_dir().join("predict").join(model);

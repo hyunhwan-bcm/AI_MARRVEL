@@ -518,12 +518,24 @@ pub fn feature_engineering(scores: &Frame, tier: &Frame, stats: &FeatureStats) -
     }
     let assigned: Vec<usize> = (0..n).filter(|&i| !plp_perc[i].is_str("-")).collect();
     out.insert("isB/LB".into(), Work::Int(is_blb));
-    if assigned.is_empty() {
+    // pandas `.loc[mask] = values` on an int64 column: stays int64 when only some rows are set
+    // and every value set is a whole number; becomes float64 when all rows are set or any value
+    // is fractional/NaN.
+    let values: Vec<f64> = assigned
+        .iter()
+        .map(|&i| plp_perc[i].to_f64())
+        .collect::<R<_>>()?;
+    let stays_int =
+        assigned.len() < n && values.iter().all(|v| v.fract() == 0.0 && v.abs() < 9.0e15);
+    if stays_int {
+        for (&i, v) in assigned.iter().zip(&values) {
+            is_plp[i] = *v as i64;
+        }
         out.insert("isP/LP".into(), Work::Int(is_plp));
     } else {
         let mut v: Vec<f64> = is_plp.iter().map(|&x| x as f64).collect();
-        for i in assigned {
-            v[i] = plp_perc[i].to_f64()?;
+        for (&i, x) in assigned.iter().zip(values) {
+            v[i] = x;
         }
         out.insert("isP/LP".into(), Work::Float(v));
     }
@@ -930,8 +942,9 @@ fn join_tier(table: &mut Table, tier: &Frame) -> R<()> {
 
     // Union index: table order, then tier-only ids.
     let base = table.index.len();
+    let present: std::collections::HashSet<String> = table.index.iter().cloned().collect();
     for id in &order {
-        if !table.index.contains(id) {
+        if !present.contains(id) {
             table.index.push(id.clone());
         }
     }

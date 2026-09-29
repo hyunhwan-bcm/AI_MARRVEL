@@ -37,9 +37,14 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × Prettier fixes restacked across #37–#39
 - × Diffusion ported, 1.4 GB → 15.5 MB, 3,608 scores identical (#40)
 - × CI green on #36–#38; prettier excluded from golden files (#39, #40)
-- < Bigger fixture: 1,450 ClinVar hg38 variants — baseline running
+- × Bigger fixture: 1,450 ClinVar hg38 variants — baseline 5 min 15 s, 111 tasks
+  - – task time: VEP 32%, feature.py 29%, ClinVar join 19%, tier 8%
   - – `simple_repeat` never fires on chrX: variant ids use `23`, the BED uses `X`
-- • Missing-value fill (`fillna_tier.py`) + simple repeats → full MERGE step
+- × Missing-value fill + simple repeats → full MERGE step (#42) — matrix identical to ≤ 1 ulp
+  - – switched table I/O to Polars (user: use Rust alternatives); ~1-ulp float parse diffs accepted
+- × Review of #36–#40: no blocking issues; fixed VEP fetch hardening, fixture paths, SHAP claim, early-stop guard
+  - ! overrides script linked to itself on re-run — fixed, idempotent now
+- < Review #42, then merge #36 → #42 into fork main
 - • ClinVar/HGMD region join (`add_c_nc.py`) + `generate_new_matrix_2.py` → JOIN_PHRANK
 - • Tier (`VarTierDiseaseDBFalse.R`)
 - • PREDICTION I/O: recessive pairs, expanded matrix, SHAP JSON writer

@@ -9,8 +9,8 @@ OMIM_HGMD <- args[2]
 OMIM_OBO <- args[3]
 OMIM_GENEMAP2 <- args[4]
 OMIM_PHENO <- args[5]
-OUTFILE_CZ_NAME <- args[6]
-OUTFILE_DX_NAME <- args[7]
+OUTFILE_HGMD_SIM <- args[6]
+OUTFILE_OMIM_SIM <- args[7]
 
 dat <- read.csv(OMIM_HGMD, sep = "\t")
 
@@ -59,7 +59,7 @@ if (dim(dat)[1] == 0) {
 }
 
 
-write.table(dat2, OUTFILE_CZ_NAME, sep = "\t", quote = F, row.names = F)
+write.table(dat2, OUTFILE_HGMD_SIM, sep = "\t", quote = F, row.names = F)
 
 
 
@@ -117,4 +117,4 @@ OMIM_HPO_all_order <- OMIM_HPO_all_wGene[order(OMIM_HPO_all_wGene$Similarity_Sco
 # OMIM_HPO_all_filt <- head(OMIM_HPO_all_order, n = No_candidate)
 OMIM_HPO_all_filt <- OMIM_HPO_all_order[OMIM_HPO_all_order$Similarity_Score >= simi_thresh, ]
 
-write.table(OMIM_HPO_all_filt, OUTFILE_DX_NAME, sep = "\t", quote = F, row.names = F)
+write.table(OMIM_HPO_all_filt, OUTFILE_OMIM_SIM, sep = "\t", quote = F, row.names = F)

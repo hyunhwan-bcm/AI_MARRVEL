@@ -8,6 +8,8 @@ permissions:
 
 jobs:
   smoke-test:
+    # Needs the LiuzLab AWS test queue and secrets; skip on forks (a failure here closes the PR).
+    if: github.repository == 'LiuzLab/AI_MARRVEL'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

@@ -8,6 +8,8 @@ on:
 
 jobs:
   build:
+    # Pushes to LiuzLab Docker Hub; skip on forks.
+    if: github.repository == 'LiuzLab/AI_MARRVEL'
     runs-on: ubuntu-latest
 
     steps:

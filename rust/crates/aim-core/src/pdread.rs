@@ -121,7 +121,8 @@ pub fn precise_xstrtod(s: &str) -> Option<f64> {
 /// A token as the C parser's float conversion reads it (`to_double`, then `inf` spellings).
 fn parse_double(t: &str) -> Option<f64> {
     if let Some(v) = precise_xstrtod(t) {
-        return Some(v);
+        // an out-of-range value (HUGE_VAL) is a failed parse: the chunk stays text
+        return v.is_finite().then_some(v);
     }
     let l = t.trim().to_ascii_lowercase();
     match l.as_str() {
@@ -139,6 +140,12 @@ fn parse_int(t: &str) -> Option<i64> {
         return None;
     }
     s.parse::<i64>().ok()
+}
+
+fn is_integer_text(t: &str) -> bool {
+    let s = t.trim_matches(|c: char| c.is_ascii_whitespace());
+    let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 fn parse_bool(t: &str) -> Option<bool> {
@@ -168,6 +175,14 @@ fn convert_chunk(tokens: &[Option<String>]) -> (ChunkKind, Vec<Py>) {
             .collect();
         if let Some(v) = ints {
             return (ChunkKind::Int, v.into_iter().map(Py::Int).collect());
+        }
+        // integers beyond int64: pandas' uint64 / object fallback keeps the text
+        if tokens
+            .iter()
+            .all(|t| is_integer_text(t.as_deref().unwrap()))
+        {
+            let vals = tokens.iter().map(|t| Py::Str(t.clone().unwrap())).collect();
+            return (ChunkKind::Object, vals);
         }
     }
     let floats: Option<Vec<f64>> = tokens
@@ -224,6 +239,8 @@ fn concat_chunks(chunks: Vec<(ChunkKind, Vec<Py>)>) -> Col {
     let kinds: Vec<ChunkKind> = chunks.iter().map(|c| c.0).collect();
     let all = |k: ChunkKind| kinds.iter().all(|&x| x == k);
     let has = |k: ChunkKind| kinds.contains(&k);
+    // numpy's common type: int64 + float64 -> float64, bool + int64 -> int64, bool + float64
+    // -> float64 (checked against pandas 1.4.3: a bool chunk next to an int chunk prints 0/1)
     let kind = if kinds.is_empty() || has(ChunkKind::Object) {
         Kind::Object
     } else if all(ChunkKind::Int) {
@@ -233,7 +250,7 @@ fn concat_chunks(chunks: Vec<(ChunkKind, Vec<Py>)>) -> Col {
     } else if has(ChunkKind::Float) {
         Kind::Float64
     } else {
-        Kind::Int64 // bool + int64 -> int64
+        Kind::Int64
     };
     let mut vals = Vec::with_capacity(chunks.iter().map(|c| c.1.len()).sum());
     for (_, v) in chunks {
@@ -528,5 +545,12 @@ mod tests {
         assert_eq!(t.names, ["x", "x.1", "y"]);
         assert_eq!(t.col("x.1").unwrap().vals[0], Py::str("a,b"));
         assert_eq!(t.col("y").unwrap().vals[0], Py::str("q\"r"));
+    }
+
+    #[test]
+    fn out_of_range_numbers_stay_text() {
+        let t = table("a\tb\n10000000000000000000\t1e400\n");
+        assert_eq!(t.col("a").unwrap().vals[0], Py::str("10000000000000000000"));
+        assert_eq!(t.col("b").unwrap().vals[0], Py::str("1e400"));
     }
 }

@@ -719,6 +719,10 @@ pub fn features(
     }
     let has_zyg = vep.has("ZYG");
     let n = order.len();
+    if n == 0 {
+        // feature.py fails too (KeyError in load_raw_matrix)
+        return Err(invalid(format!("{}: no variant rows", vep_path.display())));
+    }
 
     // --- getAnnotateInfoRow_3_1 (f1) ---
     let mut f1: HashMap<&'static str, Vec<Py>> = HashMap::new();
@@ -1251,8 +1255,15 @@ fn lit_order(vep: &Table, first: &str) -> io::Result<Vec<usize>> {
         });
         groups[g].1.push(i);
     }
-    groups.sort_by(|a, b| a.0.cmp(&b.0));
     let strong = |i: usize| matches!(impact.vals[i].as_str(), Some("HIGH" | "MODERATE"));
+    // pandas keeps the original order when every group comes back unchanged (no variant
+    // loses a transcript); otherwise the groups are concatenated in sorted key order
+    let filtered =
+        |rows: &[usize]| rows.iter().any(|&i| strong(i)) && rows.iter().any(|&i| !strong(i));
+    if !groups.iter().any(|(_, rows)| filtered(rows)) {
+        return Ok((0..ids.vals.len()).collect());
+    }
+    groups.sort_by(|a, b| a.0.cmp(&b.0));
     let mut out = Vec::new();
     for (_, rows) in groups {
         if rows.iter().any(|&i| strong(i)) {
@@ -1417,4 +1428,28 @@ fn write_csv(f: &Frame) -> String {
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vep(rows: &[(&str, &str)]) -> Table {
+        let mut text = String::from("#Uploaded_variation\tIMPACT\n");
+        for (id, impact) in rows {
+            text.push_str(&format!("{id}\t{impact}\n"));
+        }
+        read_table(text.as_bytes(), '\t', 0, Some(&["#0", "IMPACT"])).unwrap()
+    }
+
+    #[test]
+    fn lit_keeps_order_unless_a_variant_loses_transcripts() {
+        // pandas 1.4.3: groupby(...).apply returns the rows in their original order when every
+        // group comes back whole
+        let t = vep(&[("b", "LOW"), ("a", "MODIFIER"), ("b", "LOW")]);
+        assert_eq!(lit_order(&t, "#Uploaded_variation").unwrap(), [0, 1, 2]);
+        // otherwise groups are concatenated in sorted key order
+        let t = vep(&[("b", "LOW"), ("a", "HIGH"), ("a", "LOW"), ("b", "MODERATE")]);
+        assert_eq!(lit_order(&t, "#Uploaded_variation").unwrap(), [1, 3]);
+    }
 }

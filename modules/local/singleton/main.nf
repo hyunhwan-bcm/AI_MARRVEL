@@ -375,8 +375,8 @@ process HPO_SIM {
     path omim_pheno
 
     output:
-    path "${params.run_id}-cz", emit: hgmd_sim
-    path "${params.run_id}-dx", emit: omim_sim
+    path "${params.run_id}.hgmd_sim.tsv", emit: hgmd_sim
+    path "${params.run_id}.omim_sim.tsv", emit: omim_sim
 
     script:
     if (params.rust)
@@ -388,7 +388,7 @@ process HPO_SIM {
 
     ${params.aim_bin} hpo-sim input.copied.hpos.txt --hgmd $omim_hgmd_phen --obo $omim_obo \\
         --genemap ${params.rust_refs}/omim_annotate/${params.ref_ver}/genemap2_pheno.tsv \\
-        --omim-pheno $omim_pheno --out-cz ${params.run_id}-cz --out-dx ${params.run_id}-dx
+        --omim-pheno $omim_pheno --out-hgmd ${params.run_id}.hgmd_sim.tsv --out-omim ${params.run_id}.omim_sim.tsv
     """
     else
     """
@@ -398,7 +398,7 @@ process HPO_SIM {
     fi
 
     phenoSim.R input.copied.hpos.txt $omim_hgmd_phen $omim_obo $omim_genemap2 $omim_pheno \\
-        ${params.run_id}-cz ${params.run_id}-dx
+        ${params.run_id}.hgmd_sim.tsv ${params.run_id}.omim_sim.tsv
     """
 
 }

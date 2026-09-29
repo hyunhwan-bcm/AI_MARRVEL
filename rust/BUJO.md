@@ -21,7 +21,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × Native baseline with pixi (no Docker): py/r/vep envs mirror the production images
   - – conda `perl-db_file` segfaults on arm64 → use perl's bundled DB_File
 - × Lineage trace: input fields → features → model splits
-  - – 36 of 104 features never split on; `nc_*` ClinVar features unused but row duplication matters
+  - – 42 of the default model's 103 features never split on (corrected 2026-09-29; earlier note said 36 of 104); `nc_*` ClinVar features unused but row duplication matters
   - – ~47 GiB of data never read (kept, not deleted)
 - × Decisions: `v1` identical default, `v2` placeholder; additive only, nothing deleted
 - × Prediction stage in Rust — bit-identical (XGBoost, confidence, ranking, SHAP)
@@ -82,7 +82,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × End-to-end `--rust true` with phrank: 108/108 tasks, 4 min 03 s (baseline 5 min 15 s); model outputs identical; features ≤ 6.9e-13 rel (pandas parser truncation in the baseline)
 - × Review of #49: no blocking issues (set emulation matched CPython on 1,200 random cases up to 90k entries); fixed SV alleles with `:` (the shell chain drops their genes)
 - o Merged #48 into fork `main`
-- × HPO_SIM in Rust (`aim hpo-sim`): OBO parse, descendant IC, Lin best-match average, dplyr groups, R `merge()` order, `write.table` numbers — `-dx`/`-cz` byte-identical to `phenoSim.R` (pipeline run + 3 synthetic cases incl. a non-empty HGMD table)
+- × HPO_SIM in Rust (`aim hpo-sim`): OBO parse, descendant IC, Lin best-match average, dplyr groups, R `merge()` order, `write.table` numbers — OMIM/HGMD similarity tables byte-identical to `phenoSim.R` (pipeline run + 3 synthetic cases incl. a non-empty HGMD table)
   - ! R's `formatReal` scales in double on arm64 but 80-bit long double on x86-64: a last digit can differ on Linux (documented)
   - – genemap2 is an RDS: exported once to TSV (`export_genemap.R`); no R at run time with `--rust`
   - – 5.31 s / 575 MB (R) → 0.22 s / 141 MB

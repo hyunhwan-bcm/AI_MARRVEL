@@ -1,5 +1,5 @@
 //! HPO_SIM: `bin/phenoSim.R` — similarity of the patient's HPO terms to every OMIM disease
-//! (`<id>-dx`) and HGMD phenotype (`<id>-cz`), with ontologyIndex 2.12 / ontologySimilarity 2.7:
+//! (OMIM disease similarity table) and HGMD phenotype (HGMD phenotype similarity table), with ontologyIndex 2.12 / ontologySimilarity 2.7:
 //!
 //! - `get_OBO(propagate_relationships = c("is_a", "part_of"))`: every `[Term]`, `[Typedef]` and
 //!   `[Instance]` stanza is a term; ancestors include the term itself.
@@ -604,8 +604,8 @@ impl Genemap {
     }
 }
 
-/// `<id>-dx`: OMIM diseases (from `HPO_OMIM.tsv`) with their genes, by similarity.
-pub fn omim_dx(
+/// OMIM disease similarity table: OMIM diseases (from `HPO_OMIM.tsv`) with their genes, by similarity.
+pub fn omim_similarity(
     sim: &PatientSim,
     onto: &Ontology,
     omim_pheno: &str,
@@ -680,8 +680,8 @@ pub fn omim_dx(
     Ok(out)
 }
 
-/// `<id>-cz`: HGMD phenotypes (`HGMD_phen.tsv`; header only in the public data) by similarity.
-pub fn hgmd_cz(sim: &PatientSim, onto: &Ontology, hgmd: &str) -> io::Result<String> {
+/// HGMD phenotype similarity table: HGMD phenotypes (`HGMD_phen.tsv`; header only in the public data) by similarity.
+pub fn hgmd_similarity(sim: &PatientSim, onto: &Ontology, hgmd: &str) -> io::Result<String> {
     const HEADER: &str = "acc_num\tphen_id\tgene_sym\tHPO\tHPO_list\tSimilarity_Score\n";
     let (names, cols) = read_tsv(hgmd, "HGMD phenotypes")?;
     let n = cols.first().map_or(0, |c| match c {

@@ -11,7 +11,9 @@ use aim_core::diffusion::Network;
 use aim_core::fill::FeatureStats;
 use aim_core::join::{chrom_filter, join_phrank, ClinVarTables};
 use aim_core::pandas::{read_df, to_csv, to_csv_no_index, Frame};
-use aim_core::phenosim::{hgmd_cz, omim_dx, patient_terms, Genemap, Ontology, PatientSim};
+use aim_core::phenosim::{
+    hgmd_similarity, omim_similarity, patient_terms, Genemap, Ontology, PatientSim,
+};
 use aim_core::phrank::{
     first_fields, genes_via_symbols, phrank_text, vcf_variants, GeneLocations, Phrank,
 };
@@ -68,7 +70,7 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// HPO_SIM (phenoSim.R): patient HPO terms -> <id>-cz (HGMD) and <id>-dx (OMIM) similarities
+    /// HPO_SIM (phenoSim.R): patient HPO terms -> HGMD phenotype and OMIM disease similarity tables
     HpoSim {
         /// patient HPO terms (the process's input.copied.hpos.txt)
         hpo: PathBuf,
@@ -85,9 +87,9 @@ enum Command {
         #[arg(long)]
         omim_pheno: PathBuf,
         #[arg(long)]
-        out_cz: PathBuf,
+        out_hgmd: PathBuf,
         #[arg(long)]
-        out_dx: PathBuf,
+        out_omim: PathBuf,
     },
     /// ANNOTATE_TIER (VarTierDiseaseDBFalse.R): scores.csv -> Tier.v2.tsv
     Tier {
@@ -292,17 +294,18 @@ fn run(cli: Cli) -> Result<()> {
             obo,
             genemap,
             omim_pheno,
-            out_cz,
-            out_dx,
+            out_hgmd,
+            out_omim,
         } => {
             let onto = Ontology::parse(&fs::read_to_string(&obo)?)?;
             let patient = patient_terms(&fs::read_to_string(&hpo)?);
             let sim = PatientSim::new(&onto, &patient)?;
-            let cz = hgmd_cz(&sim, &onto, &fs::read_to_string(&hgmd)?)?;
-            write_text(&out_cz, &cz)?;
+            let hgmd_table = hgmd_similarity(&sim, &onto, &fs::read_to_string(&hgmd)?)?;
+            write_text(&out_hgmd, &hgmd_table)?;
             let genemap = Genemap::parse(&fs::read_to_string(&genemap)?)?;
-            let dx = omim_dx(&sim, &onto, &fs::read_to_string(&omim_pheno)?, &genemap)?;
-            write_text(&out_dx, &dx)?;
+            let omim_table =
+                omim_similarity(&sim, &onto, &fs::read_to_string(&omim_pheno)?, &genemap)?;
+            write_text(&out_omim, &omim_table)?;
         }
         Command::Tier {
             scores,

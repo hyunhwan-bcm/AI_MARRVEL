@@ -4,8 +4,8 @@
 #
 #     Rscript rust/tools/make_goldens_phenosim.R <repo_root> <data_dir> <out_dir>
 #
-# Each <out_dir>/<case>/ gets input.hpo.txt, HGMD_phen.tsv, expected_cz.tsv and
-# expected_dx.tsv.gz (hg38 inputs otherwise).
+# Each <out_dir>/<case>/ gets input.hpo.txt, HGMD_phen.tsv, expected_hgmd_sim.tsv and
+# expected_omim_sim.tsv.gz (hg38 inputs otherwise).
 args <- commandArgs(trailingOnly = TRUE)
 repo <- args[1]; data <- args[2]; out <- args[3]
 set.seed(20260929)
@@ -27,12 +27,12 @@ for (name in names(cases)) {
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
   writeLines(cases[[name]], file.path(d, "input.hpo.txt"))
   write.table(hgmd, file.path(d, "HGMD_phen.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
-  dx <- file.path(d, "expected_dx.tsv")
+  omim_out <- file.path(d, "expected_omim_sim.tsv")
   st <- system2("Rscript", c(file.path(repo, "bin", "phenoSim.R"), file.path(d, "input.hpo.txt"),
                              file.path(d, "HGMD_phen.tsv"), file.path(ann, "hp.obo"),
                              file.path(ann, "hg38", "genemap2_v2022.rds"),
-                             file.path(ann, "hg38", "HPO_OMIM.tsv"), file.path(d, "expected_cz.tsv"), dx))
+                             file.path(ann, "hg38", "HPO_OMIM.tsv"), file.path(d, "expected_hgmd_sim.tsv"), omim_out))
   stopifnot(st == 0)
-  system2("gzip", c("-nf9", dx))
+  system2("gzip", c("-nf9", omim_out))
   cat(name, ": ", length(cases[[name]]), " terms\n", sep = "")
 }

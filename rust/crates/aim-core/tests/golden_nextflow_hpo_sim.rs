@@ -1,4 +1,4 @@
-//! Rust vs `bin/phenoSim.R` (HPO_SIM): the pipeline run's `<id>-cz` / `<id>-dx` and
+//! Rust vs `bin/phenoSim.R` (HPO_SIM): the pipeline run's HGMD / OMIM similarity tables and
 //! `rust/tools/make_goldens_phenosim.R` cases (more phenotype sets, a synthetic HGMD table),
 //! compared byte for byte.
 
@@ -7,7 +7,9 @@ mod common;
 use std::io::Read;
 use std::path::Path;
 
-use aim_core::phenosim::{hgmd_cz, omim_dx, patient_terms, Genemap, Ontology, PatientSim};
+use aim_core::phenosim::{
+    hgmd_similarity, omim_similarity, patient_terms, Genemap, Ontology, PatientSim,
+};
 use common::{golden_dir, refs_dir};
 
 fn read(path: &Path) -> String {
@@ -50,21 +52,21 @@ fn hpo_sim_matches_phenosim_r() {
     for (dir, hgmd) in cases {
         let patient = patient_terms(&read(&dir.join("input.hpo.txt")));
         let sim = PatientSim::new(&onto, &patient).unwrap();
-        let dx = omim_dx(&sim, &onto, &omim, &genemap).unwrap();
-        let want = read_gz(&dir.join("expected_dx.tsv.gz"));
+        let omim_table = omim_similarity(&sim, &onto, &omim, &genemap).unwrap();
+        let want = read_gz(&dir.join("expected_omim_sim.tsv.gz"));
         assert!(
-            dx == want,
-            "{}: dx {}",
+            omim_table == want,
+            "{}: OMIM table {}",
             dir.display(),
-            first_difference(&dx, &want)
+            first_difference(&omim_table, &want)
         );
-        let cz = hgmd_cz(&sim, &onto, &read(&hgmd)).unwrap();
-        let want = read(&dir.join("expected_cz.tsv"));
+        let hgmd_table = hgmd_similarity(&sim, &onto, &read(&hgmd)).unwrap();
+        let want = read(&dir.join("expected_hgmd_sim.tsv"));
         assert!(
-            cz == want,
-            "{}: cz {}",
+            hgmd_table == want,
+            "{}: HGMD table {}",
             dir.display(),
-            first_difference(&cz, &want)
+            first_difference(&hgmd_table, &want)
         );
     }
 }

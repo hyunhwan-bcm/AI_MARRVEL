@@ -120,7 +120,7 @@ AIM_VEP_HOME = "$PIXI_PROJECT_ROOT/.native/vep-104.3"
 PERL5LIB = "$PIXI_PROJECT_ROOT/.native/perl-overrides:$PIXI_PROJECT_ROOT/.native/vep-104.3:$PIXI_PROJECT_ROOT/.native/vep-104.3/modules"
 
 [feature.vep.tasks]
-fetch-vep = "bash native/fetch_vep.sh $PIXI_PROJECT_ROOT/.native/vep-104.3 && bash native/perl_overrides.sh $PIXI_PROJECT_ROOT/.native/perl-overrides"
+fetch-vep = "bash native/fetch_vep.sh $PIXI_PROJECT_ROOT/.native/vep-104.3 && bash native/perl_overrides.sh $PIXI_PROJECT_ROOT/.native/perl-overrides && $AIM_VEP_HOME/vep --help | grep -Eq 'ensembl-vep +: 104.3' && echo 'VEP 104.3 OK'"
 
 [environments]
 py = { features = ["py", "tools"], solve-group = "py" }

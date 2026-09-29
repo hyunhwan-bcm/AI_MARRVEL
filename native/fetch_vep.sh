@@ -15,8 +15,8 @@ layers=(
   sha256:d838e84a64e1af35f4a220f0a5712cb236cde0e501a61c3c56034ac152c42b39
 )
 
-if [[ -x "$dest/vep" ]]; then
-  echo "VEP already present at $dest"; exit 0
+if [[ -f "$dest/.fetched-from" ]]; then
+  echo "VEP already present at $dest ($(cat "$dest/.fetched-from"))"; exit 0
 fi
 
 tmp="$(mktemp -d)"
@@ -28,15 +28,23 @@ for digest in "${layers[@]}"; do
   echo "Fetching layer ${digest:7:12}"
   curl -fsSL -H "Authorization: Bearer $token" "https://registry-1.docker.io/v2/${repo}/blobs/${digest}" -o "$tmp/layer.tgz"
   echo "${digest#sha256:}  $tmp/layer.tgz" | shasum -a 256 -c - >/dev/null
-  tar -xzf "$tmp/layer.tgz" -C "$tmp" 'opt/vep/src/ensembl-vep' 2>/dev/null || true
-  # Apply OCI whiteouts: ".wh.NAME" deletes NAME from lower layers.
-  find "$tmp/opt/vep/src/ensembl-vep" -name '.wh.*' 2>/dev/null | while read -r wh; do
+  tree="opt/vep/src/ensembl-vep"
+  tar -tzf "$tmp/layer.tgz" > "$tmp/layer.list"
+  if grep -q "^$tree/" "$tmp/layer.list"; then
+    # Opaque whiteout: this layer replaces the directory's contents from lower layers.
+    { grep "^$tree/.*\.wh\.\.wh\.\.opq$" "$tmp/layer.list" || true; } | while read -r opq; do
+      find "$tmp/$(dirname "$opq")" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    done
+    tar -xzf "$tmp/layer.tgz" -C "$tmp" "$tree"
+  fi
+  # Whiteouts: ".wh.NAME" deletes NAME from lower layers.
+  find "$tmp/$tree" -name '.wh.*' 2>/dev/null | while read -r wh; do
     rm -rf "$(dirname "$wh")/$(basename "$wh" | sed 's/^\.wh\.//')" "$wh"
   done
-  rm -f "$tmp/layer.tgz"
+  rm -f "$tmp/layer.tgz" "$tmp/layer.list"
 done
 
 mkdir -p "$(dirname "$dest")"
 mv "$tmp/opt/vep/src/ensembl-vep" "$dest"
-"$dest/vep" --help >/dev/null 2>&1 || true
+echo "ensemblorg/ensembl-vep:release_104.3 ${layers[*]}" > "$dest/.fetched-from"
 echo "VEP 104.3 extracted to $dest"

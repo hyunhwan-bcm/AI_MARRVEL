@@ -28,7 +28,7 @@ pixi run -e r install-ontologysimilarity
 ## Run the fixture
 
 ```bash
-native/run_fixture.sh    # REF_DIR, FIXTURE, OUT overridable via env
+REF_DIR=/path/to/aim-data native/run_fixture.sh   # FIXTURE, OUT, STORE_DIR optional
 ```
 
 ## Known data issue: hg38 gnomAD genome index

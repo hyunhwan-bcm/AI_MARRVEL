@@ -1,0 +1,12 @@
+[package]
+name = "aim-core"
+description = "Core computations of the AI-MARRVEL Rust port"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# arbitrary_precision keeps each JSON number's text so floats parse straight to f32 without
+# going through f64 first.
+serde_json = { version = "1", features = ["arbitrary_precision"] }

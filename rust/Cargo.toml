@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/aim-core"]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-only"
+version = "0.1.0"
+
+[profile.release]
+lto = true
+codegen-units = 1

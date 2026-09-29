@@ -79,13 +79,23 @@ fn r_num(s: &str) -> Option<f64> {
     t.parse::<f64>().ok()
 }
 
-/// readr's column guess from the first `GUESS_MAX` values, then parsing every value with it.
+/// readr's column guess, then parsing every value with it. readr 2.1.5 guesses from 999 rows
+/// spaced evenly (every `n / GUESS_MAX` rows from the first) plus the last row, as measured by
+/// moving a single non-number through the file.
 fn readr_column(raw: &[Option<&str>]) -> Vec<RVal> {
-    let head: Vec<&str> = raw
+    let n = raw.len();
+    let step = (n / GUESS_MAX).max(1);
+    let mut sample: Vec<usize> = (0..GUESS_MAX - 1)
+        .map(|i| i * step)
+        .filter(|&i| i < n)
+        .collect();
+    if n > 0 && sample.last() != Some(&(n - 1)) {
+        sample.push(n - 1);
+    }
+    let head: Vec<&str> = sample
         .iter()
-        .take(GUESS_MAX)
-        .filter(|v| !r_is_na(**v))
-        .map(|v| v.unwrap())
+        .filter_map(|&i| raw[i])
+        .filter(|v| !r_is_na(Some(v)))
         .collect();
     enum Kind {
         Lgl,
@@ -524,11 +534,21 @@ mod tests {
 
     #[test]
     fn readr_guesses_from_first_1000_rows() {
-        let mut raw: Vec<Option<&str>> = vec![Some("0.5"); 1000];
-        raw.push(Some("-"));
+        // rows 1-999 and the last row are sampled for n = 1500: a "-" at row 1200 is not seen
+        let mut raw: Vec<Option<&str>> = vec![Some("0.5"); 1500];
+        raw[1200] = Some("-");
         let col = readr_column(&raw);
         assert_eq!(col[0], RVal::Num(0.5));
-        assert_eq!(col[1000], RVal::Na, "non-numeric after row 1000 becomes NA");
+        assert_eq!(col[1200], RVal::Na, "unsampled non-number becomes NA");
+        // ...but a "-" in the last row is sampled, so the column is text
+        raw[1499] = Some("-");
+        assert_eq!(readr_column(&raw)[0], RVal::Chr("0.5".into()));
+        // n = 3000: every 3rd row is sampled; row 4 (index 3) is, row 5 (index 4) is not
+        let mut raw: Vec<Option<&str>> = vec![Some("1"); 3000];
+        raw[4] = Some("-");
+        assert_eq!(readr_column(&raw)[0], RVal::Num(1.0));
+        raw[3] = Some("-");
+        assert_eq!(readr_column(&raw)[0], RVal::Chr("1".into()));
         let col = readr_column(&[Some("-"), Some("0.5")]);
         assert_eq!(col[1], RVal::Chr("0.5".into()));
     }

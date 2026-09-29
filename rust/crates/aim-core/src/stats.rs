@@ -38,6 +38,16 @@ pub fn rank_predictions(predict: &[f32]) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// `scipy.stats.rankdata(values, method="max")`: 1-based rank, ties share the highest rank.
+pub fn rankdata_max(values: &[f64]) -> Vec<usize> {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    values
+        .iter()
+        .map(|v| sorted.partition_point(|s| s <= v))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,6 +59,12 @@ mod tests {
         // scipy.stats.percentileofscore([1, 2, 3, 3, 4], 3) == 70.0
         assert_eq!(percentile_of_score(&[1.0, 2.0, 3.0, 3.0, 4.0], 3.0), 70.0);
         assert_eq!(percentile_of_score(&[1.0, 2.0], 0.5), 0.0);
+    }
+
+    #[test]
+    fn rankdata_max_matches_scipy() {
+        // scipy.stats.rankdata([0.0, 2.0, 0.0, 1.0], "max") == [2, 4, 2, 3]
+        assert_eq!(rankdata_max(&[0.0, 2.0, 0.0, 1.0]), vec![2, 4, 2, 3]);
     }
 
     #[test]

@@ -27,6 +27,19 @@ pub fn model_dir(model: &str) -> PathBuf {
     dir
 }
 
+/// Exported reference data: `rust/refs/` or `$AIM_REFS_DIR` (`rust/tools/export_refs.py`).
+pub fn refs_dir() -> PathBuf {
+    let dir = std::env::var_os("AIM_REFS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| rust_dir().join("refs"));
+    assert!(
+        dir.join("mod5_diffusion/net.csr").exists(),
+        "{} missing: run rust/tools/export_refs.py <data_dir> rust/refs in the baseline py env",
+        dir.display()
+    );
+    dir
+}
+
 pub fn load_model(model: &str) -> (Booster, Vec<f64>) {
     let dir = model_dir(model);
     let booster = Booster::from_json_file(dir.join("model.json")).unwrap();

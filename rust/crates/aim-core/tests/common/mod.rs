@@ -1,6 +1,8 @@
 //! Helpers shared by the golden tests.
 #![allow(dead_code)]
 
+pub mod pandas_parse;
+
 use std::path::{Path, PathBuf};
 
 use aim_core::xgb::Booster;

@@ -52,7 +52,12 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × Tier (`VarTierDiseaseDBFalse.R`) — `Tier.v2.tsv` byte-identical on 4 files (990 rows)
   - – R `merge()` reorders rows within a gene: `do_merge` uses an unstable Shell sort; reproduced
   - – readr guesses column types from the first 1,000 rows; reproduced (not triggered in the goldens)
-- • PREDICTION I/O: recessive pairs, expanded matrix, SHAP JSON writer
+- o Merged #44 into fork `main`
+- × PREDICTION I/O (part 1): `run_final.py` + default/nd `extraModel` files + SHAP JSON — row order and cells match both runs
+  - – pandas `sort_values` is numpy's unstable introsort: ported, verified on tie-heavy inputs
+  - ! pandas' CSV parser keeps 17 digits incl. leading zeros → up to ~1e-14 rel on small values (tests use it as an oracle)
+  - – Python repr breaks exact 17-digit ties half-to-even; Rust's shortest formatter didn't — fixed
+- • PREDICTION I/O (part 2): recessive pairs, recessive models, expanded matrix
 - • phrank chain + HPO similarity (R)
 - • Feature annotation (`feature.py`)
 - • `aim` CLI + Nextflow `-profile rust` end-to-end comparison

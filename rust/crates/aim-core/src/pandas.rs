@@ -367,11 +367,15 @@ pub fn py_repr(x: f64) -> String {
     }
     let sci = format!("{:e}", x); // e.g. "-2.142857142857142e-1"
     let (mantissa, exp) = sci.split_once('e').unwrap();
-    let exp: i32 = exp.parse().unwrap();
+    let mut exp: i32 = exp.parse().unwrap();
     let (sign, mantissa) = mantissa
         .strip_prefix('-')
         .map_or(("", mantissa), |m| ("-", m));
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let mut digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    if digits.len() == 17 {
+        // Two 17-digit strings can be equally close; Python's repr picks the even last digit.
+        (digits, exp) = round_half_even_17(x.abs());
+    }
     if (-4..16).contains(&exp) {
         let point = exp + 1; // digits before the decimal point
         if point <= 0 {
@@ -400,6 +404,40 @@ pub fn py_repr(x: f64) -> String {
     }
 }
 
+/// 17 significant digits of `x` (> 0), rounded half to even from its exact decimal expansion.
+fn round_half_even_17(x: f64) -> (String, i32) {
+    let exact = format!("{x:.800e}"); // exact: every double has a finite decimal expansion
+    let (m, e) = exact.split_once('e').unwrap();
+    let mut exp: i32 = e.parse().unwrap();
+    let all: Vec<u8> = m
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .map(|b| b - b'0')
+        .collect();
+    let (keep, rest) = all.split_at(17);
+    let mut d = keep.to_vec();
+    let tail_nonzero = rest[1..].iter().any(|&v| v != 0);
+    let round_up = rest[0] > 5 || (rest[0] == 5 && (tail_nonzero || d[16] % 2 == 1));
+    if round_up {
+        let mut i = 16;
+        loop {
+            if d[i] < 9 {
+                d[i] += 1;
+                break;
+            }
+            d[i] = 0;
+            if i == 0 {
+                d.insert(0, 1);
+                d.pop();
+                exp += 1;
+                break;
+            }
+            i -= 1;
+        }
+    }
+    (d.iter().map(|v| char::from(b'0' + v)).collect(), exp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +452,7 @@ mod tests {
             (0.2142857142857142, "0.2142857142857142"),
             (-1.5e-7, "-1.5e-07"),
             (1.2345678901234568e17, "1.2345678901234568e+17"),
+            (f64::from(-0.170_764_92_f32), "-0.17076492309570312"), // exact tie: half to even, like Python
         ] {
             assert_eq!(py_repr(x), want);
         }

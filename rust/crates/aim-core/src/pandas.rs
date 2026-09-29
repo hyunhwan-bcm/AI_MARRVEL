@@ -171,6 +171,93 @@ impl Frame {
     }
 }
 
+/// `pd.read_csv(path, sep=sep)` as a Polars frame (pandas' NA strings; gzip detected).
+pub fn read_df(path: impl AsRef<std::path::Path>, sep: u8) -> PolarsResult<DataFrame> {
+    csv_options(sep)
+        .try_into_reader_with_file_path(Some(path.as_ref().to_path_buf()))?
+        .finish()
+}
+
+/// `DataFrame.to_csv(sep=sep)` (with the default RangeIndex written first) for frames holding
+/// what pandas would: int64 columns with missing values print as floats (pandas upcasts them),
+/// missing values print empty, floats use Python's repr, fields are quoted only if needed.
+pub fn to_csv(df: &DataFrame, sep: char) -> PolarsResult<String> {
+    let quote = |v: &str| -> String {
+        if v.contains(sep) || v.contains('"') || v.contains('\n') || v.contains('\r') {
+            format!("\"{}\"", v.replace('"', "\"\""))
+        } else {
+            v.to_owned()
+        }
+    };
+    let cols: Vec<&Series> = df
+        .columns()
+        .iter()
+        .map(|c| c.as_materialized_series())
+        .collect();
+    let mut rendered: Vec<Vec<String>> = Vec::with_capacity(cols.len());
+    for s in &cols {
+        let v: Vec<String> = match s.dtype() {
+            DataType::Int64 if s.null_count() == 0 => s
+                .i64()?
+                .into_no_null_iter()
+                .map(|x| x.to_string())
+                .collect(),
+            DataType::Int64 => s
+                .i64()?
+                .iter()
+                .map(|x| x.map_or(String::new(), |x| py_repr(x as f64)))
+                .collect(),
+            DataType::Float64 => s
+                .f64()?
+                .iter()
+                .map(|x| match x {
+                    Some(x) if !x.is_nan() => py_repr(x),
+                    _ => String::new(),
+                })
+                .collect(),
+            DataType::Boolean => s
+                .bool()?
+                .iter()
+                .map(|x| {
+                    x.map_or(String::new(), |b| {
+                        if b { "True" } else { "False" }.to_owned()
+                    })
+                })
+                .collect(),
+            DataType::String => s
+                .str()?
+                .iter()
+                .map(|x| x.map_or(String::new(), quote))
+                .collect(),
+            DataType::Null => vec![String::new(); s.len()],
+            _ => s
+                .cast(&DataType::String)?
+                .str()?
+                .iter()
+                .map(|x| x.map_or(String::new(), quote))
+                .collect(),
+        };
+        rendered.push(v);
+    }
+    let mut out = String::new();
+    out.push_str(
+        &df.get_column_names()
+            .iter()
+            .map(|n| quote(n.as_str()))
+            .fold(String::new(), |acc, n| acc + &sep.to_string() + &n),
+    );
+    out.push('\n');
+    for i in 0..df.height() {
+        out.push_str(&i.to_string());
+        for col in &rendered {
+            out.push(sep);
+            out.push_str(&col[i]);
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 fn csv_options(sep: u8) -> CsvReadOptions {
     let na = NullValues::AllColumns(NA_STRINGS.iter().map(|s| PlSmallStr::from(*s)).collect());
     CsvReadOptions::default()

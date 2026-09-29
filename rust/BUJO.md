@@ -44,8 +44,10 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – switched table I/O to Polars (user: use Rust alternatives); ~1-ulp float parse diffs accepted
 - × Review of #36–#40: no blocking issues; fixed VEP fetch hardening, fixture paths, SHAP claim, early-stop guard
   - ! overrides script linked to itself on re-run — fixed, idempotent now
-- < Review #42, then merge #36 → #42 into fork main
-- • ClinVar/HGMD region join (`add_c_nc.py`) + `generate_new_matrix_2.py` → JOIN_PHRANK
+- × Review of #42: no blocking issues; fixed `isP/LP` int64 rule and O(N×M) tier lookup
+- o Merged #36–#42 into fork `main` (fast-forward, reviewed commits unchanged)
+- × JOIN_PHRANK (`add_c_nc.py` + `generate_new_matrix_2.py`) — 3 chromosome files, 255,675 cells identical, 1,001 within 1 ulp
+  - ! non-coding ClinVar features never match anything: int vs str chromosome (#43) — the N×M grids compute nothing
 - • Tier (`VarTierDiseaseDBFalse.R`)
 - • PREDICTION I/O: recessive pairs, expanded matrix, SHAP JSON writer
 - • phrank chain + HPO similarity (R)

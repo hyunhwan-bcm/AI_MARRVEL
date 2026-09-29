@@ -2,6 +2,7 @@
 
 pub mod diffusion;
 pub mod fill;
+pub mod join;
 pub mod pandas;
 pub mod postprocess;
 pub mod stats;

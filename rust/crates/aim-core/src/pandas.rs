@@ -182,6 +182,15 @@ pub fn read_df(path: impl AsRef<std::path::Path>, sep: u8) -> PolarsResult<DataF
 /// what pandas would: int64 columns with missing values print as floats (pandas upcasts them),
 /// missing values print empty, floats use Python's repr, fields are quoted only if needed.
 pub fn to_csv(df: &DataFrame, sep: char) -> PolarsResult<String> {
+    render_csv(df, sep, true)
+}
+
+/// `DataFrame.to_csv(sep=sep, index=False)`.
+pub fn to_csv_no_index(df: &DataFrame, sep: char) -> PolarsResult<String> {
+    render_csv(df, sep, false)
+}
+
+fn render_csv(df: &DataFrame, sep: char, index: bool) -> PolarsResult<String> {
     let quote = |v: &str| -> String {
         if v.contains(sep) || v.contains('"') || v.contains('\n') || v.contains('\r') {
             format!("\"{}\"", v.replace('"', "\"\""))
@@ -240,17 +249,24 @@ pub fn to_csv(df: &DataFrame, sep: char) -> PolarsResult<String> {
         rendered.push(v);
     }
     let mut out = String::new();
-    out.push_str(
-        &df.get_column_names()
-            .iter()
-            .map(|n| quote(n.as_str()))
-            .fold(String::new(), |acc, n| acc + &sep.to_string() + &n),
-    );
+    let names: Vec<String> = df
+        .get_column_names()
+        .iter()
+        .map(|n| quote(n.as_str()))
+        .collect();
+    if index {
+        out.push(sep);
+    }
+    out.push_str(&names.join(&sep.to_string()));
     out.push('\n');
     for i in 0..df.height() {
-        out.push_str(&i.to_string());
-        for col in &rendered {
-            out.push(sep);
+        if index {
+            out.push_str(&i.to_string());
+        }
+        for (j, col) in rendered.iter().enumerate() {
+            if index || j > 0 {
+                out.push(sep);
+            }
             out.push_str(&col[i]);
         }
         out.push('\n');
@@ -493,5 +509,25 @@ mod tests {
         );
         assert_eq!(f.col("d"), &vec![Cell::Bool(true), Cell::Bool(false)]);
         assert!(f.col("e").iter().all(Cell::is_na));
+    }
+
+    #[test]
+    fn to_csv_with_and_without_index() {
+        let df = DataFrame::new(
+            2,
+            vec![
+                Column::new("id".into(), ["a", "b\nc"]),
+                Column::new("x".into(), [1.5, 2.0]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            to_csv(&df, ',').unwrap(),
+            ",id,x\n0,a,1.5\n1,\"b\nc\",2.0\n"
+        );
+        assert_eq!(
+            to_csv_no_index(&df, ',').unwrap(),
+            "id,x\na,1.5\n\"b\nc\",2.0\n"
+        );
     }
 }

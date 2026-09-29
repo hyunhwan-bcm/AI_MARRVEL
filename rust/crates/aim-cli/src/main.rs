@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use aim_core::diffusion::Network;
 use aim_core::fill::FeatureStats;
 use aim_core::join::{chrom_filter, join_phrank, ClinVarTables};
-use aim_core::pandas::{read_df, to_csv, Frame};
+use aim_core::pandas::{read_df, to_csv, to_csv_no_index, Frame};
 use aim_core::postprocess::{post_process, write_matrix, MergeRefs, SimpleRepeats};
 use aim_core::predict_io::{extra_model, run_final, shap_json, Indexed};
 use aim_core::recessive::{expanded, recessive_matrix, recessive_model};
@@ -132,8 +132,7 @@ fn predict(matrix: &Path, scores: &Path, models: &Path, id: &str, out: &Path) ->
     let ex = expanded(&dp, &merged)?;
     write_text(
         &out.join(format!("final_matrix_expanded/{id}.expanded.csv.gz")),
-        // to_csv(index=False): the first column holds the index
-        &to_csv(&ex.drop(&ex.get_column_names()[0].to_string())?, ',')?,
+        &to_csv_no_index(&ex, ',')?,
     )?;
 
     let conf = out.join("conf_4Model");

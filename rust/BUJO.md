@@ -137,7 +137,8 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - × Review of #58: `.csi` preferred over `.tbi` as htslib does; the cache's `chr_synonyms.txt` used when `--chr-synonyms` is not given (as VEP does); rows matching no VCF line exit 3 (pipeline falls back to VEP)
 - × C step 3: regulatory / motif rows from the 104 cache (`aim vep-annotate --regulatory <cache>`; Storable read with the `chrysalis` crate)
   - – byte-identical to seeded VEP after removing and regenerating the rows: 218,432 ClinVar rows, 136,667 cache-sampled rows, 156,053 multi-allelic rows, 23 chromosome tasks, duplicate/unnamed lines, synthetic golden
-  - ! motifs can sit up to ~4 kb outside the chunk that stores them: VEP finds them only if a variant of the same batch loads that chunk (batch-dependent); the port reads the neighbouring chunk near boundaries
+  - ! 808 motifs are stored only in a neighbouring chunk (up to 14.9 kb away): VEP finds them only if the same fork child's slice loads that chunk (depends on buffer size and fork count); decided: always report an overlapping motif
+  - × Review of #59: amplification terms for tandem duplications; lines with one ID at one position no longer merge (rows matched to the sample's genotype alleles); a parser panic no longer hangs (slot released, error instead); HIGH_INF_POS sums bits in Perl's seeded order
   - ! the variant grouping matched unnamed variants on `chr_pos_REF` only: rows of two lines at one position merged (harmless for lookups, wrong for inserted rows); now the whole allele string, and a repeated feature+allele starts a new variant
   - – AIM reads no MOTIF_* column; motif rows matter through IMPACT (`TFBS_ablation` = MODERATE: 2 of 17,533 ClinVar variants)
   - – 17.5k variants: 42 s / 2.3 GB with 4 parses at once, 77 s at 2 (chosen: a chr17 task 3.5 s / 1.3 GB)

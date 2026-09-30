@@ -484,6 +484,32 @@ process ANNOTATE_BY_VEP {
 
     script:
     def ref_assembly = (params.ref_ver == 'hg38') ? 'GRCh38' : 'GRCh37'
+    // --rust on hg38: VEP computes the rows and consequences, then `aim vep-annotate` adds the
+    // --custom and plugin columns (the same output; validated on hg38 only, so hg19 keeps VEP's)
+    if (params.rust && params.ref_ver == 'hg38')
+    """
+    \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} \\
+        --dir_cache ${vep_dir_cache} \\
+        --fork ${task.cpus} --everything --format vcf \\
+        --cache --offline --tab --force_overwrite \\
+        --species homo_sapiens --assembly ${ref_assembly} \\
+        --af_gnomad \\
+        --individual all --output_file ${vcf.baseName}-vep.base.txt --input_file $vcf \\
+        --buffer_size 50
+
+    ${params.aim_bin} vep-annotate ${vcf.baseName}-vep.base.txt --vcf $vcf \\
+        --assembly ${ref_assembly} \\
+        --custom ${vep_custom_gnomad},gnomADg,vcf,exact,0,AF,AF_popmax,controls_nhomalt \\
+        --custom ${vep_custom_clinvar},clinvar,vcf,exact,0,CLNREVSTAT,CLNSIG,CLNSIGCONF \\
+        --custom ${vep_custom_hgmd},hgmd,vcf,exact,0,CLASS,GENE,PHEN,RANKSCORE \\
+        --plugin REVEL,${vep_plugin_revel},ALL \\
+        --plugin SpliceAI,snv=${vep_plugin_spliceai_snv},indel=${vep_plugin_spliceai_indel},cutoff=0.5 \\
+        --plugin CADD,${vep_plugin_cadd},ALL \\
+        --plugin dbNSFP,${vep_plugin_dbnsfp},ALL \\
+        --out ${vcf.baseName}-vep.txt
+    rm ${vcf.baseName}-vep.base.txt
+    """
+    else
     """
     \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} \\
         --dir_cache ${vep_dir_cache} \\

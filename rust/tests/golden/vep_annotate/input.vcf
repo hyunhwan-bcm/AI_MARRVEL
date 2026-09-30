@@ -1,0 +1,18 @@
+##fileformat=VCFv4.2
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	S1	S2
+17	7675076	ins_tp53	G	GA	30	PASS	.	GT	0/1	0/0
+17	7675087	mnv_padded	GCG	GTG	30	PASS	.	GT	0/1	0/0
+17	7675088	snv_tp53	C	T	30	PASS	.	GT	0/1	1/1
+17	7675088	multi_mixed	C	T,CA	30	PASS	.	GT	0/2	0/1
+17	7675093	mnv_suffix	CG	TG	30	PASS	.	GT	0/1	0/1
+17	43043000	rs_downstream_brca1	T	C	30	PASS	.	GT	0/1	0/1
+17	43045700	rs_3utr_brca1	T	C	30	PASS	.	GT	0/1	./.
+17	43106500	rs_cds_brca1_mid	T	C	30	PASS	.	GT	0/1	0/1
+17	43120000	rs_intron_brca1	C	T	30	PASS	.	GT	0/1	0/0
+17	43124090	rs_cds_brca1	A	G	30	PASS	.	GT	0/1	0/1
+17	43124090	rs_del_brca1	AA	A	30	PASS	.	GT	0/1	./1
+17	43124090	multi_del	AA	A,AT	30	PASS	.	GT	0/1	0/2
+17	43124096	stop_brca1	G	A	30	PASS	.	GT	0/1	0/1
+17	43125300	rs_5utr_brca1	C	T	30	PASS	.	GT	0/1	0/1
+17	43125301	.	G	C	30	PASS	.	GT	0/1	0/1

@@ -53,6 +53,18 @@ Rust port are added next to the originals, never in place of them.
 
 ## Findings that affect "identical"
 
+- VEP 104.3 is not deterministic run to run. Two runs of the same command on the same input
+  (8,233 multi-allelic lines, 156,053 rows) put 43,870 rows in a different order and differ in
+  `CDS_position`, `Protein_position`, `HGVSp` and `Amino_acids` on a few dozen rows (Perl hash
+  order: a sample's two alternates, consequence terms of equal rank). Single-allelic 0/1 and 1/1
+  input is stable. `aim vep-annotate` keeps the rows and order of the VEP run it is given, so its
+  output is identical to the full VEP command whenever VEP itself is.
+- VEP's lookups (`aim vep-annotate`) are reproduced with their v1.1.3 behaviour, not fixed:
+  dbNSFP returns the whole matching row (every `;` list complete, not this transcript's entry)
+  and overwrites VEP's `APPRIS`/`TSL`; REVEL takes the first row with the same alternate amino
+  acid whatever the transcript; custom VCFs ignore FILTER and join all matching records;
+  `gnomAD_AF` and `CLIN_SIG` come from the VEP cache, not the custom files.
+
 - The published hg38 gnomAD genome index (`vep/hg38/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz.tbi`)
   does not match its data file (every lookup fails with "Invalid BGZF header"; a freshly built
   index works), and that file names the field `nhomalt` while AIM requests `controls_nhomalt`.

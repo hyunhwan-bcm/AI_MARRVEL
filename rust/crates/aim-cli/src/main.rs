@@ -159,6 +159,33 @@ enum Command {
         #[arg(long, default_value = ".")]
         out_dir: PathBuf,
     },
+    /// ANNOTATE_BY_VEP lookups: add VEP's --custom VCF and REVEL/SpliceAI/CADD/dbNSFP plugin
+    /// columns to the tab output of a VEP run made without them
+    VepAnnotate {
+        /// VEP --tab output (run without --custom and --plugin)
+        vep: PathBuf,
+        /// the VCF VEP was run on
+        #[arg(long)]
+        vcf: PathBuf,
+        /// as VEP's --custom (file,short,vcf,exact,0,FIELDS...); repeat in VEP's order
+        #[arg(long)]
+        custom: Vec<String>,
+        /// as VEP's --plugin (REVEL,file / SpliceAI,snv=..,indel=..[,cutoff=..] / CADD,file /
+        /// dbNSFP,file,ALL); repeat in VEP's order
+        #[arg(long)]
+        plugin: Vec<String>,
+        #[arg(long, default_value = "GRCh38")]
+        assembly: String,
+        /// directory relative lookup paths are resolved against
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Print the records of a tabix-indexed file overlapping chr:start-end (1-based), as htslib
+    /// would return them (for checking the reader against `tabix`)
+    #[command(hide = true)]
+    Tabix { file: PathBuf, region: String },
 }
 
 fn write_text(path: &Path, text: &str) -> Result<()> {
@@ -400,6 +427,54 @@ fn run(cli: Cli) -> Result<()> {
             id,
             out_dir,
         } => predict(&matrix, &scores, &models, &id, &out_dir)?,
+        Command::VepAnnotate {
+            vep,
+            vcf,
+            custom,
+            plugin,
+            assembly,
+            dir,
+            out,
+        } => {
+            let lookups = aim_core::vep_annotate::Lookups::open(&custom, &plugin, &dir, &assembly)?;
+            let mut w = BufWriter::new(File::create(&out)?);
+            // VEP reads plain or gzip-compressed VCF
+            let mut f = std::io::BufReader::new(File::open(&vcf)?);
+            let gz = std::io::BufRead::fill_buf(&mut f)?.starts_with(&[0x1f, 0x8b]);
+            let vcf: Box<dyn std::io::BufRead> = if gz {
+                Box::new(std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+                    f,
+                )))
+            } else {
+                Box::new(f)
+            };
+            aim_core::vep_annotate::annotate(
+                std::io::BufReader::new(File::open(&vep)?),
+                vcf,
+                &lookups,
+                &mut w,
+            )?;
+            w.flush()?;
+        }
+        Command::Tabix { file, region } => {
+            let (chr, range) = region
+                .rsplit_once(':')
+                .ok_or("region must be chr:start-end")?;
+            let (s, e) = range
+                .split_once('-')
+                .ok_or("region must be chr:start-end")?;
+            let mut t = aim_core::tabix::Tabix::open(&file)?;
+            let mut out = BufWriter::new(std::io::stdout().lock());
+            if let Some(hits) = t.query(chr, s.parse()?, e.parse()?) {
+                for l in &hits.lines {
+                    writeln!(out, "{l}")?;
+                }
+                if let Some(err) = hits.error {
+                    eprintln!("aim: query stopped: {err}");
+                }
+            }
+            out.flush()?;
+        }
     }
     Ok(())
 }

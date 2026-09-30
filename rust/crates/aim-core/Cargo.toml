@@ -15,3 +15,7 @@ siphasher = "1"
 # arbitrary_precision keeps each JSON number's text so floats parse straight to f32 without
 # going through f64 first.
 serde_json = { version = "1", features = ["arbitrary_precision"] }
+noodles-tabix = "0.67.0"
+noodles-bgzf = "0.51.0"
+noodles-csi = "0.61.0"
+noodles-core = "0.20.0"

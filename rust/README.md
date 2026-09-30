@@ -19,7 +19,9 @@ cd rust && cargo test --release -- --include-ignored
 ## Running the pipeline with the Rust steps
 
 `--rust true` swaps PHRANK_SCORING, HPO_SIM, ANNOTATE_BY_MODULES, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION for
-the `aim` binary (default off; the other steps are unchanged):
+the `aim` binary, and on hg38 moves ANNOTATE_BY_VEP's `--custom` and plugin lookups (gnomAD,
+ClinVar, HGMD, REVEL, SpliceAI, CADD, dbNSFP) from VEP to `aim vep-annotate`; VEP still computes
+the rows and consequences (default off; the other steps are unchanged):
 
 ```bash
 cargo build --release                    # rust/target/release/aim
@@ -35,4 +37,4 @@ the merged row order follows Nextflow's chromosome completion order in both vers
 | Crate      | Contents                                                                                                                                                                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `aim-core` | XGBoost `binary:logistic` evaluation (bit-identical to xgboost 2.1.4) and approximate SHAP (bit-identical to the osx-arm64 wheel; the x86-64 Linux wheel used in production differs by a few float32 ulps), percentile confidence, rankings |
-| `aim-cli`  | `aim` binary: `phrank`, `hpo-sim`, `features`, `join-phrank`, `tier`, `merge`, `predict` (one subcommand per Nextflow process)                                                                                                              |
+| `aim-cli`  | `aim` binary: `phrank`, `hpo-sim`, `vep-annotate`, `features`, `join-phrank`, `tier`, `merge`, `predict` (one subcommand per Nextflow process)                                                                                              |

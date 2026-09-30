@@ -7,7 +7,8 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 ## Future log
 
 - • VCF preprocessing in Rust (bcftools → noodles)
-- • VEP: fastVEP behind a VEP-104 compatibility layer (optional)
+- • VEP consequence engine in Rust (stages 4–7 of the VEP plan; decide after exome timing)
+- • VEP: fastVEP behind a VEP-104 compatibility layer (v2 option)
 - • `v2` feature set + retraining (needs training data)
 - • Exome-scale benchmark
 
@@ -100,3 +101,19 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - ! DECIPHER never matches; OMIM allele file unused; `clinVarSymMatchFlag` always 0 (documented, reproduced)
   - – 15,216 rows: 36 s / 1.2 GB (Python) → 1.4 s / 322 MB
 - < Optimization review of all `aim` subcommands (running)
+
+## 2026-09-29 (Tue, evening)
+
+- o Merged #52 (`feature.py`), #53 (optimizations); status report updated
+- × VEP reverse-engineered (consequence engine, cache, lookups, tab output) and measured
+  - – `--regulatory` is 4.5 s / 870 MB of a 7 s / 1.1 GB task; plugins ~1.2 s
+  - ! dropping `--regulatory` changes results (diffusion rank, ClinVar counts, top variant) — kept
+  - ! VEP is non-deterministic for multi-allelic 1/2 samples (row order, some CDS/protein fields)
+- × Stage 3: VEP lookups in Rust (`aim vep-annotate`; tabix via noodles)
+  - – tabix reader = htslib on 8 files × 1,283 regions (6.9M records), incl. the broken gnomAD index
+  - – byte-identical to full VEP: 23 ClinVar-sample chromosomes (15,216 rows); synthetic golden
+    (every lookup rule); 156,053 multi-allelic rows (lookup columns all equal; VEP's own columns
+    vary run to run)
+  - – lookups 1.3 s → 0.28 s per chromosome task (chr19), 118 MB; parallel over variants
+  - – 17,533 ClinVar variants (218,432 rows): 42 s / 255 MB after memoising per allele (was 381 s / 1.4 GB: a 24 kb deletion re-matched 72k CADD lines per transcript row)
+  - – end-to-end `--rust` ClinVar sample: 108/108 tasks, 2 min 49 s; outputs as before (merged `CADD_phred` ≤ 1 ulp, row order)

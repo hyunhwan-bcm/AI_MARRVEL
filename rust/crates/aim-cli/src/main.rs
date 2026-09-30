@@ -160,7 +160,8 @@ enum Command {
         out_dir: PathBuf,
     },
     /// ANNOTATE_BY_VEP lookups: add VEP's --custom VCF and REVEL/SpliceAI/CADD/dbNSFP plugin
-    /// columns to the tab output of a VEP run made without them
+    /// columns to the tab output of a VEP run made without them. Exits with status 3 on input it
+    /// does not reproduce (e.g. structural variants), so the caller can use VEP's own lookups
     VepAnnotate {
         /// VEP --tab output (run without --custom and --plugin)
         vep: PathBuf,
@@ -176,9 +177,15 @@ enum Command {
         plugin: Vec<String>,
         #[arg(long, default_value = "GRCh38")]
         assembly: String,
-        /// directory relative lookup paths are resolved against
+        /// the VEP cache's chr_synonyms.txt (VEP maps custom-file chromosome names with it)
+        #[arg(long)]
+        chr_synonyms: Option<PathBuf>,
+        /// the directory VEP ran in: relative lookup paths are resolved against it
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        /// worker threads (0: one per core); each keeps one handle per lookup file
+        #[arg(long, default_value_t = 0)]
+        threads: usize,
         #[arg(long)]
         out: PathBuf,
     },
@@ -433,10 +440,18 @@ fn run(cli: Cli) -> Result<()> {
             custom,
             plugin,
             assembly,
+            chr_synonyms,
             dir,
+            threads,
             out,
         } => {
-            let lookups = aim_core::vep_annotate::Lookups::open(&custom, &plugin, &dir, &assembly)?;
+            let lookups = aim_core::vep_annotate::Lookups::open(
+                &custom,
+                &plugin,
+                &dir,
+                &assembly,
+                chr_synonyms.as_deref(),
+            )?;
             let mut w = BufWriter::new(File::create(&out)?);
             // VEP reads plain or gzip-compressed VCF
             let mut f = std::io::BufReader::new(File::open(&vcf)?);
@@ -452,6 +467,7 @@ fn run(cli: Cli) -> Result<()> {
                 std::io::BufReader::new(File::open(&vep)?),
                 vcf,
                 &lookups,
+                threads,
                 &mut w,
             )?;
             w.flush()?;
@@ -484,7 +500,15 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("aim: {e}");
-            ExitCode::FAILURE
+            // input a step does not reproduce: the caller may fall back to the original tool
+            let unsupported = e
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::Unsupported);
+            if unsupported {
+                ExitCode::from(3)
+            } else {
+                ExitCode::FAILURE
+            }
         }
     }
 }

@@ -42,11 +42,11 @@ fn lookups_match_vep() {
         "dbNSFP,dbNSFP4.test.tsv.gz,ALL",
     ]
     .map(String::from);
-    let lookups = Lookups::open(&customs, &plugins, &dir.join("data"), "GRCh38").unwrap();
+    let lookups = Lookups::open(&customs, &plugins, &dir.join("data"), "GRCh38", None).unwrap();
     let base = read_gz(&dir.join("base.txt.gz"));
     let vcf = std::fs::File::open(dir.join("input.vcf")).unwrap();
     let mut out = Vec::new();
-    annotate(base.as_bytes(), BufReader::new(vcf), &lookups, &mut out).unwrap();
+    annotate(base.as_bytes(), BufReader::new(vcf), &lookups, 2, &mut out).unwrap();
     let got = String::from_utf8(out).unwrap();
     let want = read_gz(&dir.join("expected.txt.gz"));
     let (got, want) = (from_descriptions(&got), from_descriptions(&want));

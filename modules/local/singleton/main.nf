@@ -485,28 +485,39 @@ process ANNOTATE_BY_VEP {
     script:
     def ref_assembly = (params.ref_ver == 'hg38') ? 'GRCh38' : 'GRCh37'
     // --rust on hg38: VEP computes the rows and consequences, then `aim vep-annotate` adds the
-    // --custom and plugin columns (the same output; validated on hg38 only, so hg19 keeps VEP's)
-    if (params.rust && params.ref_ver == 'hg38')
-    """
-    \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} \\
-        --dir_cache ${vep_dir_cache} \\
+    // --custom and plugin columns (the same output; validated on hg38 only, so hg19 keeps VEP's).
+    // On input aim does not reproduce (exit status 3, e.g. structural variants) VEP does it all.
+    def vep_common = """--dir_cache ${vep_dir_cache} \\
         --fork ${task.cpus} --everything --format vcf \\
         --cache --offline --tab --force_overwrite \\
         --species homo_sapiens --assembly ${ref_assembly} \\
-        --af_gnomad \\
-        --individual all --output_file ${vcf.baseName}-vep.base.txt --input_file $vcf \\
-        --buffer_size 50
-
-    ${params.aim_bin} vep-annotate ${vcf.baseName}-vep.base.txt --vcf $vcf \\
-        --assembly ${ref_assembly} \\
-        --custom ${vep_custom_gnomad},gnomADg,vcf,exact,0,AF,AF_popmax,controls_nhomalt \\
+        --af_gnomad --individual all --input_file $vcf --buffer_size 50"""
+    def vep_lookups = """--custom ${vep_custom_gnomad},gnomADg,vcf,exact,0,AF,AF_popmax,controls_nhomalt \\
         --custom ${vep_custom_clinvar},clinvar,vcf,exact,0,CLNREVSTAT,CLNSIG,CLNSIGCONF \\
         --custom ${vep_custom_hgmd},hgmd,vcf,exact,0,CLASS,GENE,PHEN,RANKSCORE \\
         --plugin REVEL,${vep_plugin_revel},ALL \\
         --plugin SpliceAI,snv=${vep_plugin_spliceai_snv},indel=${vep_plugin_spliceai_indel},cutoff=0.5 \\
         --plugin CADD,${vep_plugin_cadd},ALL \\
-        --plugin dbNSFP,${vep_plugin_dbnsfp},ALL \\
-        --out ${vcf.baseName}-vep.txt
+        --plugin dbNSFP,${vep_plugin_dbnsfp},ALL"""
+    if (params.rust && params.ref_ver == 'hg38')
+    """
+    VEP=\${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep}
+    \$VEP ${vep_common} --output_file ${vcf.baseName}-vep.base.txt
+
+    synonyms=${vep_dir_cache}/homo_sapiens/104_${ref_assembly}/chr_synonyms.txt
+    rc=0
+    ${params.aim_bin} vep-annotate ${vcf.baseName}-vep.base.txt --vcf $vcf \\
+        --assembly ${ref_assembly} --threads ${task.cpus} \\
+        \$( [ -f \$synonyms ] && echo "--chr-synonyms \$synonyms" ) \\
+        ${vep_lookups} \\
+        --out ${vcf.baseName}-vep.txt || rc=\$?
+    if [ \$rc -eq 3 ]; then
+        echo "aim vep-annotate: unsupported input, running VEP's own lookups" >&2
+        \$VEP ${vep_common} --dir_plugins ${vep_dir_plugins} ${vep_lookups} \\
+            --output_file ${vcf.baseName}-vep.txt
+    elif [ \$rc -ne 0 ]; then
+        exit \$rc
+    fi
     rm ${vcf.baseName}-vep.base.txt
     """
     else

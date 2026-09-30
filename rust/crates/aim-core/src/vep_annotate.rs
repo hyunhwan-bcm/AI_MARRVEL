@@ -15,9 +15,11 @@
 //!   acid, whatever its transcript;
 //! - custom VCFs ignore FILTER, and several matching records are joined with `,` in file order.
 //!
-//! Not supported (an error, not a silent difference): structural variants, a
-//! `dbNSFP_replacement_logic` file, a dbNSFP README next to the data file, and a chromosome that
-//! needs VEP's synonym table rather than adding or removing `chr`.
+//! Not supported, reported as `ErrorKind::Unsupported` (the CLI exits with status 3 and the
+//! pipeline then lets VEP do the lookups) rather than as a silent difference: structural
+//! variants, a `dbNSFP_replacement_logic` file, a dbNSFP README next to the data file, other
+//! dbNSFP versions and options, and a chromosome with several usable synonyms (VEP would pick one
+//! in hash order). Chromosome synonyms come from the cache's `chr_synonyms.txt`.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Write};
@@ -27,6 +29,12 @@ use crate::tabix::Tabix;
 
 fn err(msg: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg.into())
+}
+
+/// Input or options this port does not reproduce: `ErrorKind::Unsupported`, so a caller can fall
+/// back to VEP's own lookups.
+fn unsupported(msg: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, msg.into())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -283,6 +291,8 @@ fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
             start += 1;
         }
     }
+    // validate_vf upper-cases the allele string after the trimming above (Parser.pm:587)
+    let ref_allele = ref_allele.to_ascii_uppercase();
     let name = ids.split(';').next().unwrap_or("").to_owned();
     let base = Vf {
         name,
@@ -396,6 +406,23 @@ pub struct Custom {
     tbx: Tabix,
     valid: HashSet<String>,
     is_clinvar: bool,
+    synonyms: Synonyms,
+}
+
+/// The cache's `chr_synonyms.txt`, both directions (`BaseVEP::chromosome_synonyms`).
+type Synonyms = std::sync::Arc<HashMap<String, Vec<String>>>;
+
+fn read_synonyms(path: &Path) -> io::Result<HashMap<String, Vec<String>>> {
+    let mut m: HashMap<String, Vec<String>> = HashMap::new();
+    for line in std::fs::read_to_string(path)?.lines() {
+        let mut it = line.split_whitespace();
+        let Some(r) = it.next() else { continue };
+        for syn in it {
+            m.entry(r.to_owned()).or_default().push(syn.to_owned());
+            m.entry(syn.to_owned()).or_default().push(r.to_owned());
+        }
+    }
+    Ok(m)
 }
 
 struct CustomRecord {
@@ -405,7 +432,7 @@ struct CustomRecord {
 
 impl Custom {
     /// Parses `file,short,vcf,exact,0,F1,F2...`.
-    pub fn open(spec: &str, base: &Path) -> io::Result<Custom> {
+    pub fn open(spec: &str, base: &Path, synonyms: Synonyms) -> io::Result<Custom> {
         let p: Vec<&str> = spec.split(',').collect();
         if p.len() < 5 {
             return Err(err(format!(
@@ -413,7 +440,7 @@ impl Custom {
             )));
         }
         if p[2] != "vcf" || p[3] != "exact" || p[4] != "0" {
-            return Err(err(format!(
+            return Err(unsupported(format!(
                 "--custom {spec}: only vcf,exact,0 is supported"
             )));
         }
@@ -433,7 +460,29 @@ impl Custom {
             tbx,
             valid,
             is_clinvar: source.as_deref() == Some("ClinVar"),
+            synonyms,
         })
+    }
+
+    /// `get_source_chr_name`: the name itself, else a synonym the file has, else with `chr`
+    /// added or removed. Perl tries synonyms in hash order, so two usable ones are an error.
+    fn source_chr(&self, chr: &str) -> io::Result<String> {
+        if self.valid.contains(chr) {
+            return Ok(chr.to_owned());
+        }
+        let usable: Vec<&String> = self
+            .synonyms
+            .get(chr)
+            .map(|s| s.iter().filter(|x| self.valid.contains(*x)).collect())
+            .unwrap_or_default();
+        match usable.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => Ok(source_chr(chr, &self.valid)),
+            _ => Err(unsupported(format!(
+                "{}: chromosome {chr} has several synonyms in the file",
+                self.file_arg
+            ))),
+        }
     }
 
     fn try_clone(&self) -> io::Result<Custom> {
@@ -444,6 +493,7 @@ impl Custom {
             tbx: self.tbx.try_clone()?,
             valid: self.valid.clone(),
             is_clinvar: self.is_clinvar,
+            synonyms: self.synonyms.clone(),
         })
     }
 
@@ -459,21 +509,21 @@ impl Custom {
     }
 
     /// Records matching `allele` of `vf`, in file order (`File.pm` annotate_InputBuffer).
-    fn lookup(&mut self, vf: &Vf, allele: &str, warn: &mut Warn) -> Vec<CustomRecord> {
-        let src = source_chr(&vf.chr, &self.valid);
+    fn lookup(&mut self, vf: &Vf, allele: &str) -> io::Result<Vec<CustomRecord>> {
+        let src = self.source_chr(&vf.chr)?;
         let hits = self.tbx.query(&src, vf.start - 1, vf.end + 1).or_else(|| {
             self.tbx
                 .query(&format!("chr{src}"), vf.start - 1, vf.end + 1)
         });
         let Some(hits) = hits else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         if let Some(e) = &hits.error {
-            warn.once(&self.file_arg, e);
+            warn_once(&self.file_arg, e);
         }
         let mut out = Vec::new();
         let Some(akeys) = AKeys::new(&vf.ref_allele, allele, vf.start) else {
-            return out;
+            return Ok(out);
         };
         for line in &hits.lines {
             let f: Vec<&str> = line.split('\t').collect();
@@ -542,7 +592,7 @@ impl Custom {
                 });
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -619,12 +669,12 @@ impl PluginFile {
     }
 
     /// `_get_data_hts`: the lines of `chr:s-e`, or none when the name is unknown.
-    fn get(&mut self, chr: &str, s: i64, e: i64, warn: &mut Warn) -> Vec<String> {
+    fn get(&mut self, chr: &str, s: i64, e: i64) -> Vec<String> {
         let src = source_chr(chr, &self.valid);
         match self.tbx.query(&src, s, e) {
             Some(h) => {
                 if let Some(er) = &h.error {
-                    warn.once(&self.path, er);
+                    warn_once(&self.path, er);
                 }
                 h.lines
             }
@@ -646,14 +696,14 @@ impl PluginFile {
 
 /// `get_data`: queries every file in order; `die` (caught by VEP, so no result) on a zero
 /// start or end.
-fn get_data(files: &mut [PluginFile], chr: &str, s: i64, e: i64, warn: &mut Warn) -> Vec<String> {
+fn get_data(files: &mut [PluginFile], chr: &str, s: i64, e: i64) -> Vec<String> {
     // zero dies (caught); a negative start makes a region htslib cannot parse
     if s <= 0 || e <= 0 {
         return Vec::new();
     }
     let mut out = Vec::new();
     for f in files.iter_mut() {
-        out.extend(f.get(chr, s, e, warn));
+        out.extend(f.get(chr, s, e));
     }
     out
 }
@@ -724,9 +774,14 @@ impl Plugin {
             "REVEL" => {
                 let mut file =
                     PluginFile::open(params.first().ok_or_else(|| err("REVEL: no file"))?, base)?;
-                let cols = file.header_columns()?.len();
+                let header = file.header_columns()?;
+                let cols = header.len();
                 if !matches!(cols, 7..=9) {
                     return Err(err("REVEL: header must have 7, 8 or 9 columns"));
+                }
+                let pos_col = if grch37 { "hg19_pos" } else { "grch38_pos" };
+                if !header.iter().any(|h| h == pos_col) {
+                    return Err(err(format!("REVEL: the file has no {pos_col} column")));
                 }
                 Ok(Plugin::Revel { file, cols, grch37 })
             }
@@ -786,7 +841,7 @@ impl Plugin {
                     return Err(err(format!("dbNSFP: no version in the file name {path}")));
                 };
                 if matches!(version, "2.9" | "4.0.1") {
-                    return Err(err(format!("dbNSFP {version} is not supported")));
+                    return Err(unsupported(format!("dbNSFP {version} is not supported")));
                 }
                 if path.contains('/') {
                     let dir = Path::new(path)
@@ -797,7 +852,7 @@ impl Plugin {
                         for e in rd.flatten() {
                             let n = e.file_name().to_string_lossy().to_lowercase();
                             if n.contains("dbnsfp") && n.ends_with("readme.txt") {
-                                return Err(err(
+                                return Err(unsupported(
                                     "dbNSFP: a README next to the data file is not supported",
                                 ));
                             }
@@ -813,15 +868,17 @@ impl Plugin {
                 }
                 i += 1;
                 if params.get(i).is_some_and(|f| base.join(f).exists()) {
-                    return Err(err("dbNSFP: a replacement-logic file is not supported"));
+                    return Err(unsupported(
+                        "dbNSFP: a replacement-logic file is not supported",
+                    ));
                 }
                 if base.join("dbNSFP_replacement_logic").exists() {
-                    return Err(err(
+                    return Err(unsupported(
                         "dbNSFP: a dbNSFP_replacement_logic file is not supported",
                     ));
                 }
                 if params.get(i).is_some_and(|p| p.starts_with("pep_match=")) {
-                    return Err(err("dbNSFP: pep_match is not supported"));
+                    return Err(unsupported("dbNSFP: pep_match is not supported"));
                 }
                 let mut cols: Vec<String> = Vec::new();
                 for &c in &params[i..] {
@@ -847,7 +904,7 @@ impl Plugin {
                     grch37,
                 })
             }
-            _ => Err(err(format!("plugin {name} is not supported"))),
+            _ => Err(unsupported(format!("plugin {name} is not supported"))),
         }
     }
 
@@ -914,7 +971,7 @@ impl Plugin {
         }
     }
 
-    fn run(&mut self, row: &RowView, cache: &mut PluginCache, warn: &mut Warn) -> Out {
+    fn run(&mut self, row: &RowView, cache: &mut PluginCache) -> Out {
         let vf = row.vf;
         match self {
             Plugin::Revel { file, cols, grch37 } => {
@@ -922,7 +979,7 @@ impl Plugin {
                     return Vec::new();
                 }
                 let lines = cache.get(0, (vf.start, vf.end), || {
-                    get_data(std::slice::from_mut(file), &vf.chr, vf.start, vf.end, warn)
+                    get_data(std::slice::from_mut(file), &vf.chr, vf.start, vf.end)
                 });
                 let (s, e) = (vf.start.to_string(), vf.end.to_string());
                 for l in lines {
@@ -959,9 +1016,7 @@ impl Plugin {
                 } else {
                     (vf.start, vf.end)
                 };
-                let lines = cache.get(1, (start, end), || {
-                    get_data(files, &vf.chr, start, end, warn)
-                });
+                let lines = cache.get(1, (start, end), || get_data(files, &vf.chr, start, end));
                 if lines.is_empty() {
                     return Vec::new();
                 }
@@ -1030,7 +1085,7 @@ impl Plugin {
                     return o.clone();
                 }
                 cache.get(2, (vf.start - 2, vf.end), || {
-                    get_data(files, &vf.chr, vf.start - 2, vf.end, warn)
+                    get_data(files, &vf.chr, vf.start - 2, vf.end)
                 });
                 let lines = &cache.last[2].as_ref().unwrap().1;
                 let akeys = AKeys::new(&vf.ref_allele, row.allele, vf.start);
@@ -1080,7 +1135,7 @@ impl Plugin {
                     vf.chr.as_str()
                 };
                 let lines = cache.get(3, (vf.start - 1, vf.end), || {
-                    get_data(std::slice::from_mut(file), chr, vf.start - 1, vf.end, warn)
+                    get_data(std::slice::from_mut(file), chr, vf.start - 1, vf.end)
                 });
                 let pos_col = if *grch37 {
                     "hg19_pos(1-based)"
@@ -1162,18 +1217,13 @@ impl PluginCache {
 
 /// One warning per file for the whole run (VEP prints htslib's error and carries on without
 /// the records).
-struct Warn;
-
-static WARNED: std::sync::Mutex<Option<HashSet<String>>> = std::sync::Mutex::new(None);
-
-impl Warn {
-    fn once(&mut self, file: &str, e: &str) {
-        let mut w = WARNED.lock().unwrap_or_else(|e| e.into_inner());
-        if w.get_or_insert_with(HashSet::new).insert(file.to_owned()) {
-            eprintln!(
-                "aim vep-annotate: {file}: {e}; queries hitting this return no records, as in VEP"
-            );
-        }
+fn warn_once(file: &str, e: &str) {
+    static WARNED: std::sync::Mutex<Option<HashSet<String>>> = std::sync::Mutex::new(None);
+    let mut w = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    if w.get_or_insert_with(HashSet::new).insert(file.to_owned()) {
+        eprintln!(
+            "aim vep-annotate: {file}: {e}; queries hitting this return no records, as in VEP"
+        );
     }
 }
 
@@ -1362,12 +1412,18 @@ pub struct Lookups {
 impl Lookups {
     /// `customs` and `plugins` as VEP's `--custom` / `--plugin` values; relative paths are
     /// resolved against `base` (the directory VEP would run in).
+    /// `synonyms` is the VEP cache's `chr_synonyms.txt`, which VEP uses for custom sources.
     pub fn open(
         customs: &[String],
         plugins: &[String],
         base: &Path,
         assembly: &str,
+        synonyms: Option<&Path>,
     ) -> io::Result<Lookups> {
+        let synonyms: Synonyms = std::sync::Arc::new(match synonyms {
+            Some(p) => read_synonyms(p)?,
+            None => HashMap::new(),
+        });
         let grch37 = match assembly {
             "GRCh38" => false,
             "GRCh37" => true,
@@ -1376,7 +1432,7 @@ impl Lookups {
         Ok(Lookups {
             customs: customs
                 .iter()
-                .map(|c| Custom::open(c, base))
+                .map(|c| Custom::open(c, base, synonyms.clone()))
                 .collect::<io::Result<_>>()?,
             plugins: plugins
                 .iter()
@@ -1404,10 +1460,12 @@ impl Lookups {
 
 /// Adds the lookups to VEP tab output `vep` (from a run on `vcf` without `--custom` and
 /// `--plugin`), writing the full output.
+/// `threads` worker threads (0: one per core), each keeping one handle per lookup file.
 pub fn annotate(
     vep: impl BufRead,
     vcf: impl BufRead,
     lookups: &Lookups,
+    threads: usize,
     out: &mut impl Write,
 ) -> io::Result<()> {
     let mut lines = vep.lines();
@@ -1444,7 +1502,7 @@ pub fn annotate(
     let i_ind = col("IND");
     if base_cols.iter().any(|c| c == "SOURCE") && !lookups.customs.is_empty() {
         return Err(err(
-            "VEP output already has a SOURCE column: was it run with --custom?",
+            "VEP output already has a SOURCE column (from --custom or --merged): run VEP without them",
         ));
     }
 
@@ -1505,9 +1563,16 @@ pub fn annotate(
     };
     // one set of open files per worker thread; variants are independent, so batches of them
     // are annotated in parallel and written back in input order
-    let pool: Vec<std::sync::Mutex<Option<Lookups>>> = (0..rayon::current_num_threads())
-        .map(|_| std::sync::Mutex::new(None))
-        .collect();
+    let threads = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .map_err(|e| err(e.to_string()))?;
+    let pool = Pool {
+        slots: (0..threads.current_num_threads())
+            .map(|_| std::sync::Mutex::new(None))
+            .collect(),
+        threads,
+    };
     let mut groups: Vec<(Vf, Vec<String>)> = Vec::new();
     let mut n_rows = 0usize;
     for l in lines {
@@ -1524,10 +1589,11 @@ pub fn annotate(
             )));
         }
         let sample = i_ind.map(|i| row[i]);
+        // a structural variant has one row set for all samples and its own location rules; it
+        // only needs to be recognised (to stop with an "unsupported" error)
         let matches = |v: &Vf| {
             v.uploaded_name_matches(row[i_up])
-                && v.sample.as_deref() == sample
-                && v.location() == row[i_loc]
+                && (v.structural || (v.sample.as_deref() == sample && v.location() == row[i_loc]))
         };
         if groups.last().is_some_and(|(v, _)| matches(v)) {
             groups.last_mut().unwrap().1.push(l);
@@ -1552,7 +1618,7 @@ pub fn annotate(
             }
         };
         if vf.structural {
-            return Err(err(format!(
+            return Err(unsupported(format!(
                 "structural variant {} is not supported",
                 vf.name
             )));
@@ -1580,33 +1646,50 @@ struct RowLayout<'a> {
 fn write_groups(
     groups: &[(Vf, Vec<String>)],
     template: &Lookups,
-    pool: &[std::sync::Mutex<Option<Lookups>>],
+    pool: &Pool,
     layout: &RowLayout,
     out: &mut impl Write,
 ) -> io::Result<()> {
     use rayon::prelude::*;
-    let texts: Vec<io::Result<String>> = groups
-        .par_iter()
-        .map(|(vf, rows)| {
-            let t = rayon::current_thread_index().unwrap_or(0) % pool.len();
-            let mut slot = pool[t].lock().unwrap_or_else(|e| e.into_inner());
-            if slot.is_none() {
-                *slot = Some(template.try_clone()?);
-            }
-            Ok(annotate_variant(vf, rows, slot.as_mut().unwrap(), layout))
-        })
-        .collect();
+    let texts: Vec<io::Result<String>> = pool.threads.install(|| {
+        groups
+            .par_iter()
+            .map(|(vf, rows)| {
+                let t = rayon::current_thread_index().unwrap_or(0) % pool.slots.len();
+                let mut slot = pool.slots[t].lock().unwrap_or_else(|e| e.into_inner());
+                if slot.is_none() {
+                    *slot = Some(template.try_clone()?);
+                }
+                annotate_variant(vf, rows, slot.as_mut().unwrap(), layout)
+            })
+            .collect()
+    });
     for t in texts {
         out.write_all(t?.as_bytes())?;
     }
     Ok(())
 }
 
+/// Worker threads, each with its own open lookup files (created on first use).
+struct Pool {
+    threads: rayon::ThreadPool,
+    slots: Vec<std::sync::Mutex<Option<Lookups>>>,
+}
+
 /// The output rows of one input variant.
-fn annotate_variant(vf: &Vf, rows: &[String], lookups: &mut Lookups, layout: &RowLayout) -> String {
-    let mut cache = PluginCache::default();
+fn annotate_variant(
+    vf: &Vf,
+    rows: &[String],
+    lookups: &mut Lookups,
+    layout: &RowLayout,
+) -> io::Result<String> {
+    // one cache per plugin instance
+    let mut caches: Vec<PluginCache> = lookups
+        .plugins
+        .iter()
+        .map(|_| PluginCache::default())
+        .collect();
     let mut custom_cache: HashMap<(usize, String), Vec<CustomRecord>> = HashMap::new();
-    let mut warn = Warn;
     let mut extra: HashMap<String, Option<String>> = HashMap::new();
     let mut text = String::new();
     fn dash(s: &str) -> Option<&str> {
@@ -1625,15 +1708,16 @@ fn annotate_variant(vf: &Vf, rows: &[String], lookups: &mut Lookups, layout: &Ro
         extra.clear();
         // custom annotations are added to the row before the plugins run
         for (ci, c) in lookups.customs.iter_mut().enumerate() {
-            let recs = custom_cache
-                .entry((ci, view.allele.to_owned()))
-                .or_insert_with(|| {
-                    if view.allele.is_empty() || view.allele == "0" {
-                        Vec::new()
-                    } else {
-                        c.lookup(vf, view.allele, &mut warn)
-                    }
-                });
+            let key = (ci, view.allele.to_owned());
+            if !custom_cache.contains_key(&key) {
+                let recs = if view.allele.is_empty() || view.allele == "0" {
+                    Vec::new()
+                } else {
+                    c.lookup(vf, view.allele)?
+                };
+                custom_cache.insert(key.clone(), recs);
+            }
+            let recs = &custom_cache[&key];
             if recs.is_empty() {
                 continue;
             }
@@ -1661,8 +1745,8 @@ fn annotate_variant(vf: &Vf, rows: &[String], lookups: &mut Lookups, layout: &Ro
                 }
             }
         }
-        for p in lookups.plugins.iter_mut() {
-            for (k, v) in p.run(&view, &mut cache, &mut warn) {
+        for (pi, p) in lookups.plugins.iter_mut().enumerate() {
+            for (k, v) in p.run(&view, &mut caches[pi]) {
                 extra.insert(k, v);
             }
         }
@@ -1678,7 +1762,7 @@ fn annotate_variant(vf: &Vf, rows: &[String], lookups: &mut Lookups, layout: &Ro
         }
         text.push('\n');
     }
-    text
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -1708,6 +1792,12 @@ mod tests {
         // multi-allelic with different first bases is not trimmed
         let v = &vcf_line_vfs("19\t100\tid3\tC\tT,CA\t.\t.\t.", &[]).unwrap()[0];
         assert_eq!((v.start, v.ref_allele.as_str()), (100, "C"));
+        // lower case: trimmed on the raw text, then upper-cased like validate_vf
+        let v = &vcf_line_vfs("19\t100\tid5\tag\ta\t.\t.\t.", &[]).unwrap()[0];
+        assert_eq!((v.start, v.ref_allele.as_str()), (101, "G"));
+        // structural variants are recognised (and reported as unsupported later)
+        let v = &vcf_line_vfs("19\t100\tsv\tC\t<DEL>\t.\t.\tSVTYPE=DEL;END=300", &[]).unwrap()[0];
+        assert!(v.structural);
         // balanced MNV kept
         let v = &vcf_line_vfs("19\t100\tid4\tGCG\tGTG\t.\t.\t.", &[]).unwrap()[0];
         assert_eq!((v.start, v.end, v.ref_allele.as_str()), (100, 102, "GCG"));

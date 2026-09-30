@@ -1,8 +1,8 @@
 //! Tabix queries as VEP's `Bio::DB::HTS::Tabix` (htslib) returns them, on top of noodles.
 //!
 //! noodles reads the index, picks the chunks and decompresses BGZF. What htslib does per record
-//! is kept here, because it decides which records VEP sees: a VCF record spans its REF (or
-//! INFO `END=`), other files their begin/end columns; reading stops at the first record past
+//! is kept here, because it decides which records VEP sees: a VCF record spans its REF, SVLEN,
+//! gVCF LEN or INFO `END=`, other files their begin/end columns; reading stops at the first record past
 //! the region or on another sequence; and a query that hits a bad BGZF block or a record it
 //! cannot parse ends there, keeping the records already returned. The bucket's hg38 gnomAD
 //! `.tbi` does not match its `.vcf.gz`, so every query into it fails that way and VEP (and this
@@ -115,7 +115,8 @@ impl Tabix {
         let tid = self.layout.names.iter().position(|n| n == chr)?;
         // htslib's 0-based half-open [beg, end)
         let beg = (start - 1).max(0);
-        if end < beg || end < 1 {
+        // htslib returns no iterator for an empty region
+        if end <= beg {
             return None;
         }
         let mut hits = Hits {
@@ -165,13 +166,20 @@ impl Tabix {
 }
 
 impl Layout {
-    /// htslib's `get_intv`: sequence id and 0-based `[beg, end)` of a record, or None when
-    /// htslib fails to parse it.
+    /// htslib 1.22's `tbx_parse1`: sequence id and 0-based `[beg, end)` of a record, or None
+    /// when htslib fails to parse it. A VCF record spans at least its REF, its longest SVLEN
+    /// (`<INS>` counting 1) and, for gVCF `<*>`/`<NON_REF>` records, its longest FORMAT LEN;
+    /// INFO `END=` can only extend it.
     fn interval_of(&self, line: &[u8]) -> Option<(Option<usize>, i64, i64)> {
         let mut seq: Option<&[u8]> = None;
         let (mut beg, mut end) = (-1i64, -1i64);
-        let zero_based = matches!(self.format, Format::Generic(CoordinateSystem::Bed));
+        let ucsc = matches!(self.format, Format::Generic(CoordinateSystem::Bed));
         let vcf = matches!(self.format, Format::Vcf);
+        // VCF: REF length, alternates that are <INS>, whether LEN is wanted, and its position
+        let (mut reflen, mut svlen, mut fmtlen) = (0i64, 0i64, 0i64);
+        // alternates seen and which of the first 64 are <INS> (no allocation: this runs for
+        // every line a query scans)
+        let (mut n_alts, mut ins, mut getlen, mut lenpos) = (0usize, 0u64, false, None::<usize>);
         for (i, field) in line.split(|&c| c == b'\t').enumerate() {
             let id = i + 1;
             if id == self.col_seq {
@@ -185,33 +193,63 @@ impl Layout {
                 if self.col_beg <= self.col_end {
                     end = beg;
                 }
-                if zero_based {
-                    end += 1;
-                } else {
+                if !ucsc {
                     beg -= 1;
+                } else if self.col_beg <= self.col_end {
+                    end += 1;
                 }
                 beg = beg.max(0);
                 end = end.max(1);
             } else if vcf {
-                if id == 4 {
-                    if !field.is_empty() {
-                        end = beg + field.len() as i64;
+                match id {
+                    4 => {
+                        if !field.is_empty() {
+                            end = beg + field.len() as i64;
+                        }
+                        reflen = field.len() as i64;
                     }
-                } else if id == 8 {
-                    let s = if field.starts_with(b"END=") {
-                        Some(&field[4..])
-                    } else {
-                        field
-                            .windows(5)
-                            .position(|w| w == b";END=")
-                            .map(|p| &field[p + 5..])
-                    };
-                    if let Some(s) = s.filter(|s| s.first() != Some(&b'.')) {
-                        let (v, _) = strtoll(s);
-                        if v > beg {
-                            end = v;
+                    5 => {
+                        for (k, a) in field.split(|&c| c == b',').enumerate() {
+                            if a.first() == Some(&b'<') {
+                                if a == b"<INS>" && k < 64 {
+                                    ins |= 1 << k;
+                                }
+                                getlen |= a == b"<*>" || a == b"<NON_REF>";
+                            }
+                            n_alts = k + 1;
                         }
                     }
+                    8 => {
+                        if let Some(s) =
+                            info_value(field, b"END=").filter(|s| s.first() != Some(&b'.'))
+                        {
+                            let (v, _) = strtoll(s);
+                            if v > beg {
+                                end = v;
+                            }
+                        }
+                        if let Some(s) = info_value(field, b"SVLEN=") {
+                            // one value per alternate, as far as there are alternates
+                            for (d, v) in s.split(|&c| c == b',').enumerate().take(n_alts) {
+                                let is_ins = d < 64 && ins & (1 << d) != 0;
+                                let len = if is_ins { 1 } else { atoll(v).abs() };
+                                svlen = svlen.max(len);
+                            }
+                        }
+                    }
+                    9 if getlen => {
+                        lenpos = field.split(|&c| c == b':').position(|f| f == b"LEN");
+                        if lenpos.is_none() {
+                            break;
+                        }
+                    }
+                    _ if id > 9 && getlen => {
+                        if let Some(p) = lenpos {
+                            let v = field.split(|&c| c == b':').nth(p).map_or(0, atoll);
+                            fmtlen = fmtlen.max(v);
+                        }
+                    }
+                    _ => {}
                 }
             } else if id == self.col_end {
                 let (v, n) = strtoll(field);
@@ -220,6 +258,9 @@ impl Layout {
                 }
                 end = v;
             }
+        }
+        if vcf {
+            end = end.max(beg + reflen.max(svlen).max(fmtlen));
         }
         let seq = seq.filter(|s| !s.is_empty())?;
         if beg < 0 || end < 0 {
@@ -230,6 +271,28 @@ impl Layout {
             .and_then(|s| self.names.iter().position(|n| n == s));
         Some((tid, beg, end))
     }
+}
+
+/// htslib's search for an INFO key (`strstr` at the start of the field, else after a `;`):
+/// the text after `key`. Only key starts are compared, since this runs for every line scanned.
+fn info_value<'a>(info: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    if info.starts_with(key) {
+        return Some(&info[key.len()..]);
+    }
+    let mut i = 0;
+    while let Some(p) = info[i..].iter().position(|&c| c == b';') {
+        let at = i + p + 1;
+        if info[at..].starts_with(key) {
+            return Some(&info[at + key.len()..]);
+        }
+        i = at;
+    }
+    None
+}
+
+/// C `atoll`: the leading integer, 0 when there is none.
+fn atoll(s: &[u8]) -> i64 {
+    strtoll(s).0
 }
 
 /// C `strtoll(s, &e, 0)` for decimal text: the value and the number of bytes consumed (0 when
@@ -258,6 +321,47 @@ fn strtoll(s: &[u8]) -> (i64, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vcf_layout() -> Layout {
+        Layout {
+            format: Format::Vcf,
+            col_seq: 1,
+            col_beg: 2,
+            col_end: 0,
+            names: vec!["17".into()],
+        }
+    }
+
+    #[test]
+    fn vcf_record_span_like_htslib() {
+        let l = vcf_layout();
+        let iv = |line: &str| l.interval_of(line.as_bytes()).unwrap();
+        // REF
+        assert_eq!(iv("17\t100\t.\tACGT\tA\t.\t.\t."), (Some(0), 99, 103));
+        // END= extends but cannot shorten below REF
+        assert_eq!(
+            iv("17\t100\t.\tA\t<DEL>\t.\t.\tSVTYPE=DEL;END=200"),
+            (Some(0), 99, 200)
+        );
+        assert_eq!(iv("17\t100\t.\tACGT\tA\t.\t.\tEND=101"), (Some(0), 99, 103));
+        // longest SVLEN; <INS> counts 1
+        assert_eq!(
+            iv("17\t100\t.\tA\t<DEL>,<DEL>\t.\t.\tSVLEN=-50,-80"),
+            (Some(0), 99, 179)
+        );
+        assert_eq!(
+            iv("17\t100\t.\tA\t<INS>\t.\t.\tSVLEN=500"),
+            (Some(0), 99, 100)
+        );
+        // gVCF LEN
+        assert_eq!(
+            iv("17\t100\t.\tA\t<*>\t.\t.\t.\tGT:LEN\t0/0:30"),
+            (Some(0), 99, 129)
+        );
+        // unknown sequence, unparsable position
+        assert_eq!(iv("18\t100\t.\tA\tC\t.\t.\t.").0, None);
+        assert!(l.interval_of(b"17\tx\t.\tA\tC").is_none());
+    }
 
     #[test]
     fn strtoll_like_c() {

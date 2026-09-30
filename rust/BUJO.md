@@ -117,3 +117,5 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – lookups 1.3 s → 0.28 s per chromosome task (chr19), 118 MB; parallel over variants
   - – 17,533 ClinVar variants (218,432 rows): 42 s / 255 MB after memoising per allele (was 381 s / 1.4 GB: a 24 kb deletion re-matched 72k CADD lines per transcript row)
   - – end-to-end `--rust` ClinVar sample: 108/108 tasks, 2 min 49 s; outputs as before (merged `CADD_phred` ≤ 1 ulp, row order)
+- × Review of #55 (each finding checked against native VEP): lowercase alleles now upper-cased as VEP does; `chr_synonyms.txt` used for custom files (chrM); structural variants and other unsupported input exit with status 3 and the pipeline falls back to VEP's own lookups; `--threads ${task.cpus}`; htslib 1.22 VCF record spans (SVLEN, gVCF LEN, END cannot shorten); per-plugin caches
+  - ! a new per-line INFO search doubled SpliceAI's time (29 → 68 s on 17.5k variants); fixed by scanning key starts only

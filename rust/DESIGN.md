@@ -106,7 +106,7 @@ Rust port are added next to the originals, never in place of them.
   regulatory features by stable ID, then motif features by dbID compared as strings, each with
   the variant's alleles in VEP's order. A deletion covering a whole motif is `TFBS_ablation`,
   IMPACT MODERATE, the one way these rows reach AIM's features (the IMPACT maximum, the LIT
-  filter, the tier's HIGH/MODERATE counts); AIM reads no MOTIF_* column. A tandem duplication
+  filter, the tier's HIGH/MODERATE counts); AIM reads no `MOTIF_*` column. A tandem duplication
   covering a feature gets the `_amplification` term. **Deliberate difference:** 808 motifs of the
   104 cache are stored only in a neighbouring chunk, up to 14,913 bp outside it. VEP reports
   such a motif only when that chunk is loaded for the same fork child's slice of its batch, so

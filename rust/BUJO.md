@@ -8,7 +8,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 
 - • VCF preprocessing in Rust (bcftools → noodles)
 - • VEP consequence engine in Rust (stages 4–7 of the VEP plan; decide after exome timing)
-- • VEP: fastVEP behind a VEP-104 compatibility layer (v2 option)
+- • VEP: fastVEP behind a VEP-104 compatibility layer (option C, in progress), then a faithful port of VEP 104 (option B)
 - • `v2` feature set + retraining (needs training data)
 - • Exome-scale benchmark
 
@@ -129,3 +129,10 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × VEP seeded (`PERL_HASH_SEED=0`, #54): reproducible output
 - × fastVEP 0.4.0 on the same input with Ensembl 104 GFF3: 3.6 s; same transcript rows; Consequence 99.906% / IMPACT 99.990% after mapping VEP 115 splice terms; no regulatory or motif rows
 - ! the VEP cache's FASTA `.fai` does not match its `.fa.gz` (63 G bases listed; chr17 lookups return header text) — to check with the gnomAD investigation
+- × VEP 115 attribution of fastVEP differences: 87 rows after term mapping = 64 fastVEP-only, 19 VEP 105+ rule changes (stop_retained, start_lost, start_retained, frameshift), 4 other
+- o Decision: option C (fastVEP + VEP-104 compatibility layer) first, then B (faithful port of VEP 104)
+- × C step 2: co-located known variants in Rust (`aim vep-annotate --known-variants <cache>`; CSI support in the tabix reader)
+  - – byte-identical to seeded VEP: 218,432 ClinVar rows, 136,667 rows sampled from the cache, 156,053 multi-allelic rows, `chr` names, synthetic golden; 2 s for 17.5k variants
+  - ! `MAX_AF_POPS` order is Perl hash order: fixed with `PERL_HASH_SEED=0` (reproduced), random without
+- • C step 3: regulatory / motif rows from the 104 cache
+- • C step 4: fastVEP compatibility layer (terms, VEP 104 rules, formatting)

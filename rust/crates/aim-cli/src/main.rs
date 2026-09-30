@@ -183,6 +183,11 @@ enum Command {
         /// the directory VEP ran in: relative lookup paths are resolved against it
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        /// the VEP cache for the assembly (e.g. <dir_cache>/homo_sapiens/104_GRCh38): recompute
+        /// the co-located known-variant columns (Existing_variation, CLIN_SIG, AF, gnomAD_AF,
+        /// MAX_AF, ...) from its all_vars.gz files, replacing the input's
+        #[arg(long)]
+        known_variants: Option<PathBuf>,
         /// worker threads (0: one per core); each keeps one handle per lookup file
         #[arg(long, default_value_t = 0)]
         threads: usize,
@@ -442,16 +447,20 @@ fn run(cli: Cli) -> Result<()> {
             assembly,
             chr_synonyms,
             dir,
+            known_variants,
             threads,
             out,
         } => {
-            let lookups = aim_core::vep_annotate::Lookups::open(
+            let mut lookups = aim_core::vep_annotate::Lookups::open(
                 &custom,
                 &plugin,
                 &dir,
                 &assembly,
                 chr_synonyms.as_deref(),
             )?;
+            if let Some(cache) = &known_variants {
+                lookups = lookups.with_known_variants(cache)?;
+            }
             let mut w = BufWriter::new(File::create(&out)?);
             // VEP reads plain or gzip-compressed VCF
             let mut f = std::io::BufReader::new(File::open(&vcf)?);

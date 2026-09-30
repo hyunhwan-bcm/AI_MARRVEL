@@ -41,7 +41,7 @@ fn unsupported(msg: impl Into<String>) -> io::Error {
 // Allele matching (Bio::EnsEMBL::Variation::Utils::Sequence)
 
 /// `trim_sequences($ref, $alt, $pos, undef, 1, $end_first)`: the minimised pair and position.
-fn trim(r: &str, a: &str, pos: i64, end_first: bool) -> (String, String, i64) {
+pub(crate) fn trim(r: &str, a: &str, pos: i64, end_first: bool) -> (String, String, i64) {
     let (mut r, mut a) = (r.as_bytes(), a.as_bytes());
     let mut pos = pos;
     // `while($ref && $alt && ...)`: Perl truthiness, so "0" stops trimming like ""
@@ -75,7 +75,7 @@ fn is_zero(s: &[u8]) -> bool {
     s == b"0"
 }
 
-fn directions(r: &str, a: &str) -> &'static [bool] {
+pub(crate) fn directions(r: &str, a: &str) -> &'static [bool] {
     if r.len() > 1 || a.len() > 1 {
         &[false, true]
     } else {
@@ -137,7 +137,7 @@ fn matched(
 }
 
 /// Perl's numeric value of a string (leading number, else 0).
-fn perl_num(s: &str) -> f64 {
+pub(crate) fn perl_num(s: &str) -> f64 {
     let t = s.trim_start();
     let b = t.as_bytes();
     let mut i = 0;
@@ -177,7 +177,7 @@ fn perl_num(s: &str) -> f64 {
 }
 
 /// Perl `split(/sep/, $s)`: trailing empty fields dropped.
-fn perl_split(s: &str, sep: char) -> Vec<&str> {
+pub(crate) fn perl_split(s: &str, sep: char) -> Vec<&str> {
     let mut v: Vec<&str> = s.split(sep).collect();
     while v.last() == Some(&"") {
         v.pop();
@@ -410,9 +410,9 @@ pub struct Custom {
 }
 
 /// The cache's `chr_synonyms.txt`, both directions (`BaseVEP::chromosome_synonyms`).
-type Synonyms = std::sync::Arc<HashMap<String, Vec<String>>>;
+pub(crate) type Synonyms = std::sync::Arc<HashMap<String, Vec<String>>>;
 
-fn read_synonyms(path: &Path) -> io::Result<HashMap<String, Vec<String>>> {
+pub(crate) fn read_synonyms(path: &Path) -> io::Result<HashMap<String, Vec<String>>> {
     let mut m: HashMap<String, Vec<String>> = HashMap::new();
     for line in std::fs::read_to_string(path)?.lines() {
         let mut it = line.split_whitespace();
@@ -423,6 +423,30 @@ fn read_synonyms(path: &Path) -> io::Result<HashMap<String, Vec<String>>> {
         }
     }
     Ok(m)
+}
+
+/// `get_source_chr_name`: the name itself, else a synonym the source has, else with `chr` added
+/// or removed. Perl tries synonyms in hash order, so two usable ones give None.
+pub(crate) fn source_chr_name(
+    chr: &str,
+    valid: &HashSet<String>,
+    synonyms: &HashMap<String, Vec<String>>,
+) -> Option<String> {
+    if valid.contains(chr) {
+        return Some(chr.to_owned());
+    }
+    // a set in Perl: a pair listed twice counts once
+    let mut usable: Vec<&String> = synonyms
+        .get(chr)
+        .map(|s| s.iter().filter(|x| valid.contains(*x)).collect())
+        .unwrap_or_default();
+    usable.sort();
+    usable.dedup();
+    match usable.as_slice() {
+        [one] => Some((*one).clone()),
+        [] => Some(source_chr(chr, valid)),
+        _ => None,
+    }
 }
 
 struct CustomRecord {
@@ -467,22 +491,12 @@ impl Custom {
     /// `get_source_chr_name`: the name itself, else a synonym the file has, else with `chr`
     /// added or removed. Perl tries synonyms in hash order, so two usable ones are an error.
     fn source_chr(&self, chr: &str) -> io::Result<String> {
-        if self.valid.contains(chr) {
-            return Ok(chr.to_owned());
-        }
-        let usable: Vec<&String> = self
-            .synonyms
-            .get(chr)
-            .map(|s| s.iter().filter(|x| self.valid.contains(*x)).collect())
-            .unwrap_or_default();
-        match usable.as_slice() {
-            [one] => Ok((*one).clone()),
-            [] => Ok(source_chr(chr, &self.valid)),
-            _ => Err(unsupported(format!(
+        source_chr_name(chr, &self.valid, &self.synonyms).ok_or_else(|| {
+            unsupported(format!(
                 "{}: chromosome {chr} has several synonyms in the file",
                 self.file_arg
-            ))),
-        }
+            ))
+        })
     }
 
     fn try_clone(&self) -> io::Result<Custom> {
@@ -1407,6 +1421,9 @@ const FIELD_DESCRIPTIONS: &[(&str, &str)] = &[
 pub struct Lookups {
     customs: Vec<Custom>,
     plugins: Vec<Plugin>,
+    /// Recomputes VEP's co-located known-variant columns (see [`crate::vep_existing`]).
+    known: Option<crate::vep_existing::KnownVariants>,
+    synonyms: Synonyms,
 }
 
 impl Lookups {
@@ -1438,7 +1455,20 @@ impl Lookups {
                 .iter()
                 .map(|p| Plugin::open(p, base, grch37))
                 .collect::<io::Result<_>>()?,
+            known: None,
+            synonyms,
         })
+    }
+
+    /// Also (re)computes the co-located known-variant columns (`Existing_variation`,
+    /// `CLIN_SIG`, the frequencies, ...) from the VEP cache directory `cache` (e.g.
+    /// `homo_sapiens/104_GRCh38`), replacing the input's values.
+    pub fn with_known_variants(mut self, cache: &Path) -> io::Result<Lookups> {
+        self.known = Some(crate::vep_existing::KnownVariants::open(
+            cache,
+            self.synonyms.clone(),
+        )?);
+        Ok(self)
     }
 
     /// The same lookups with their own file handles (indexes are shared).
@@ -1454,6 +1484,12 @@ impl Lookups {
                 .iter()
                 .map(Plugin::try_clone)
                 .collect::<io::Result<_>>()?,
+            known: self
+                .known
+                .as_ref()
+                .map(crate::vep_existing::KnownVariants::try_clone)
+                .transpose()?,
+            synonyms: self.synonyms.clone(),
         })
     }
 }
@@ -1692,6 +1728,20 @@ fn annotate_variant(
     let mut custom_cache: HashMap<(usize, String), Vec<CustomRecord>> = HashMap::new();
     let mut extra: HashMap<String, Option<String>> = HashMap::new();
     let mut text = String::new();
+    // known variants are matched against all of the variant's alleles
+    let colocated = match lookups.known.as_mut() {
+        Some(kv) => {
+            let mut alts: Vec<&str> = Vec::new();
+            for l in rows {
+                let a = l.split('\t').nth(layout.allele).unwrap_or("");
+                if !alts.contains(&a) {
+                    alts.push(a);
+                }
+            }
+            Some(crate::vep_existing::Colocated::lookup(kv, vf, &alts)?)
+        }
+        None => None,
+    };
     fn dash(s: &str) -> Option<&str> {
         (s != "-").then_some(s)
     }
@@ -1706,6 +1756,9 @@ fn annotate_variant(
             symbol: dash(row[layout.symbol]),
         };
         extra.clear();
+        if let Some(c) = &colocated {
+            extra.extend(c.row(view.allele));
+        }
         // custom annotations are added to the row before the plugins run
         for (ci, c) in lookups.customs.iter_mut().enumerate() {
             let key = (ci, view.allele.to_owned());

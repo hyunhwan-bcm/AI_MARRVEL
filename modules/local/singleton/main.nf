@@ -499,13 +499,16 @@ process ANNOTATE_BY_VEP {
         --plugin SpliceAI,snv=${vep_plugin_spliceai_snv},indel=${vep_plugin_spliceai_indel},cutoff=0.5 \\
         --plugin CADD,${vep_plugin_cadd},ALL \\
         --plugin dbNSFP,${vep_plugin_dbnsfp},ALL"""
-    // VEP's output order depends on Perl's hash order (issue #54); a fixed seed makes it reproducible.
-    // Batch size: the task's variant count, from 50 (VEP's usual) up to vep_buffer_size. A larger
-    // batch reloads VEP's cache far less, but VEP gives each fork at least ~50 variants of a batch,
-    // so a batch much larger than the task would leave forks idle. Output is identical for any size.
+    // VEP's output order depends on Perl's hash order (issue #54); a fixed seed makes it reproducible
+    // (for a given Perl build). Batch size: the task's variant count, at least 50 (VEP's usual) and
+    // at most vep_buffer_size. A larger batch reloads VEP's cache far less, but VEP gives each fork
+    // at least ~50 variants of a batch, so a batch much larger than the task would leave forks idle.
+    // Rows and all columns AIM reads are the same for any size; only VEP's HGNC_ID can change, for a
+    // few genes whose transcripts span two cache chunks (rust/DESIGN.md).
     def vep_setup = """export PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0
     n=\$(gzip -cdf $vcf | grep -vc '^#' || true)
-    bs=\$(( n < 50 ? 50 : (n > ${params.vep_buffer_size} ? ${params.vep_buffer_size} : n) ))"""
+    bs=\$(( n < 50 ? 50 : n ))
+    bs=\$(( bs > ${params.vep_buffer_size} ? ${params.vep_buffer_size} : bs ))"""
     if (params.rust && params.ref_ver == 'hg38')
     """
     ${vep_setup}

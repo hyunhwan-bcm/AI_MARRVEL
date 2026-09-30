@@ -87,7 +87,7 @@
           "type": "integer",
           "default": 1000,
           "minimum": 1,
-          "description": "Largest VEP batch (--buffer_size); each task uses its variant count, from 50 up to this. Output is identical for any size; larger batches reload VEP's cache less often (on 17,533 variants with 2 forks, 1000 is 45% faster than 50, for about 2 GB more memory)."
+          "description": "Largest VEP batch (--buffer_size); each task uses its variant count, at least 50 and at most this. Larger batches reload VEP's cache less often (on 17,533 variants with 2 forks, 1000 is 45% faster than 50) and use more memory, depending on how spread out a task's variants are (up to about 7 GB per task seen). Only VEP's HGNC_ID column, which AIM does not read, can depend on the size."
         },
         "rust": {
           "type": "boolean",

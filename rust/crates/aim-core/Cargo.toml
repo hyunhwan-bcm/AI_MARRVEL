@@ -21,3 +21,7 @@ noodles-csi = "0.61.0"
 noodles-core = "0.20.0"
 # Perl Storable reader, for the VEP cache's serialised chunks
 chrysalis = "0.1.0"
+# fastVEP (Apache-2.0): transcript model and consequence prediction, v0.4.0
+fastvep-core = { git = "https://github.com/Huang-lab/fastVEP", tag = "v0.4.0" }
+fastvep-genome = { git = "https://github.com/Huang-lab/fastVEP", tag = "v0.4.0" }
+fastvep-consequence = { git = "https://github.com/Huang-lab/fastVEP", tag = "v0.4.0" }

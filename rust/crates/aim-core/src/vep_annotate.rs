@@ -1493,6 +1493,9 @@ pub struct Lookups {
     known: Option<crate::vep_existing::KnownVariants>,
     /// Regenerates VEP's regulatory and motif rows (see [`crate::vep_regulatory`]).
     regulatory: Option<crate::vep_regulatory::Regulatory>,
+    /// Recomputes the transcript rows' consequences with fastVEP (see
+    /// [`crate::vep_transcripts`]).
+    transcripts: Option<crate::vep_transcripts::Transcripts>,
     synonyms: Synonyms,
     /// Whether `synonyms` came from the caller (else the VEP cache's file is used, as VEP does).
     synonyms_given: bool,
@@ -1530,6 +1533,7 @@ impl Lookups {
                 .collect::<io::Result<_>>()?,
             known: None,
             regulatory: None,
+            transcripts: None,
             synonyms,
             synonyms_given,
         })
@@ -1563,6 +1567,14 @@ impl Lookups {
         Ok(self)
     }
 
+    /// Also recomputes the transcript rows' `Consequence` and `IMPACT` with fastVEP on the
+    /// transcripts of the VEP cache directory `cache`.
+    pub fn with_transcripts(mut self, cache: &Path) -> io::Result<Lookups> {
+        let synonyms = self.cache_synonyms(cache)?;
+        self.transcripts = Some(crate::vep_transcripts::Transcripts::open(cache, synonyms)?);
+        Ok(self)
+    }
+
     /// The same lookups with their own file handles (indexes are shared).
     fn try_clone(&self) -> io::Result<Lookups> {
         Ok(Lookups {
@@ -1585,6 +1597,11 @@ impl Lookups {
                 .regulatory
                 .as_ref()
                 .map(crate::vep_regulatory::Regulatory::try_clone)
+                .transpose()?,
+            transcripts: self
+                .transcripts
+                .as_ref()
+                .map(crate::vep_transcripts::Transcripts::try_clone)
                 .transpose()?,
             synonyms: self.synonyms.clone(),
             synonyms_given: self.synonyms_given,
@@ -2008,6 +2025,60 @@ fn annotate_variant(
         }
         None => None,
     };
+    // (transcript, allele) -> the transcript row's columns, recomputed with fastVEP
+    let mut predicted: HashMap<(String, String), crate::vep_rows::Columns> = HashMap::new();
+    if let Some(tx) = lookups.transcripts.as_ref() {
+        let mut alts: Vec<&str> = Vec::new();
+        for l in rows {
+            let a = l.split('\t').nth(layout.allele).unwrap_or("");
+            if !alts.contains(&a) {
+                alts.push(a);
+            }
+        }
+        let near = tx.near(vf)?;
+        for tc in tx.predict(vf, &alts, &near.transcripts) {
+            let Some(ct) = near
+                .transcripts
+                .iter()
+                .find(|t| t.tr.stable_id == tc.transcript_id)
+            else {
+                continue;
+            };
+            for ac in &tc.allele_consequences {
+                let allele = match &ac.allele {
+                    fastvep_core::Allele::Sequence(s) => String::from_utf8_lossy(s).into_owned(),
+                    fastvep_core::Allele::Deletion => "-".to_owned(),
+                    other => format!("{other:?}"),
+                };
+                let upper = |p: &Option<(String, String)>| {
+                    p.as_ref()
+                        .map(|(a, b)| (a.to_ascii_uppercase(), b.to_ascii_uppercase()))
+                };
+                let coding = crate::vep_consequence::Coding::new(
+                    ct,
+                    vf.start,
+                    vf.end,
+                    &vf.ref_allele,
+                    &allele,
+                    upper(&ac.codons),
+                    ac.amino_acids.clone(),
+                );
+                let (terms, impact) =
+                    crate::vep_consequence::vep104_with_coding(&ac.consequences, &coding);
+                let row = crate::vep_rows::TranscriptAllele {
+                    ct,
+                    coding: &coding,
+                    terms: &terms,
+                    impact,
+                    codons: ac.codons.clone(),
+                    amino_acids: ac.amino_acids.clone(),
+                    hgnc_id: near.hgnc_id(ct),
+                };
+                let cols = row.columns();
+                predicted.insert((tc.transcript_id.to_string(), allele.clone()), cols);
+            }
+        }
+    }
     fn dash(s: &str) -> Option<&str> {
         (s != "-").then_some(s)
     }
@@ -2022,6 +2093,19 @@ fn annotate_variant(
             symbol: dash(row[layout.symbol]),
         };
         extra.clear();
+        if lookups.transcripts.is_some() && row[layout.feature_type] == "Transcript" {
+            let feature = layout.reg.feature.map_or("", |i| row[i]);
+            match predicted.get(&(feature.to_owned(), row[layout.allele].to_owned())) {
+                Some(cols) => {
+                    for (k, v) in cols {
+                        extra.insert((*k).to_owned(), v.clone());
+                    }
+                }
+                None => {
+                    extra.insert("Consequence".to_owned(), Some("(no prediction)".to_owned()));
+                }
+            }
+        }
         if let Some(c) = &colocated {
             extra.extend(c.row(view.allele));
         }

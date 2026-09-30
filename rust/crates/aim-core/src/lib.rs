@@ -20,4 +20,5 @@ pub mod tabix;
 pub mod tier;
 pub mod vep_annotate;
 pub mod vep_existing;
+pub mod vep_regulatory;
 pub mod xgb;

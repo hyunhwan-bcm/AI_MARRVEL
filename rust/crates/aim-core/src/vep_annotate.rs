@@ -18,8 +18,9 @@
 //! Not supported, reported as `ErrorKind::Unsupported` (the CLI exits with status 3 and the
 //! pipeline then lets VEP do the lookups) rather than as a silent difference: structural
 //! variants, a `dbNSFP_replacement_logic` file, a dbNSFP README next to the data file, other
-//! dbNSFP versions and options, and a chromosome with several usable synonyms (VEP would pick one
-//! in hash order). Chromosome synonyms come from the cache's `chr_synonyms.txt`.
+//! dbNSFP versions and options, a chromosome with several usable synonyms (VEP would pick one
+//! in hash order), and VEP rows that match no VCF line (e.g. chromosome M renamed to MT).
+//! Chromosome synonyms come from the cache's `chr_synonyms.txt`.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Write};
@@ -1424,6 +1425,8 @@ pub struct Lookups {
     /// Recomputes VEP's co-located known-variant columns (see [`crate::vep_existing`]).
     known: Option<crate::vep_existing::KnownVariants>,
     synonyms: Synonyms,
+    /// Whether `synonyms` came from the caller (else the VEP cache's file is used, as VEP does).
+    synonyms_given: bool,
 }
 
 impl Lookups {
@@ -1437,6 +1440,7 @@ impl Lookups {
         assembly: &str,
         synonyms: Option<&Path>,
     ) -> io::Result<Lookups> {
+        let synonyms_given = synonyms.is_some();
         let synonyms: Synonyms = std::sync::Arc::new(match synonyms {
             Some(p) => read_synonyms(p)?,
             None => HashMap::new(),
@@ -1457,6 +1461,7 @@ impl Lookups {
                 .collect::<io::Result<_>>()?,
             known: None,
             synonyms,
+            synonyms_given,
         })
     }
 
@@ -1464,11 +1469,20 @@ impl Lookups {
     /// `CLIN_SIG`, the frequencies, ...) from the VEP cache directory `cache` (e.g.
     /// `homo_sapiens/104_GRCh38`), replacing the input's values.
     pub fn with_known_variants(mut self, cache: &Path) -> io::Result<Lookups> {
-        self.known = Some(crate::vep_existing::KnownVariants::open(
-            cache,
-            self.synonyms.clone(),
-        )?);
+        let synonyms = self.cache_synonyms(cache)?;
+        self.known = Some(crate::vep_existing::KnownVariants::open(cache, synonyms)?);
         Ok(self)
+    }
+
+    /// The chromosome synonyms for a VEP cache source: the caller's, else the cache's
+    /// `chr_synonyms.txt` (`CacheDir.pm` reads it unless `--synonyms` is given).
+    fn cache_synonyms(&self, cache: &Path) -> io::Result<Synonyms> {
+        let file = cache.join("chr_synonyms.txt");
+        Ok(if !self.synonyms_given && file.exists() {
+            std::sync::Arc::new(read_synonyms(&file)?)
+        } else {
+            self.synonyms.clone()
+        })
     }
 
     /// The same lookups with their own file handles (indexes are shared).
@@ -1490,6 +1504,7 @@ impl Lookups {
                 .map(crate::vep_existing::KnownVariants::try_clone)
                 .transpose()?,
             synonyms: self.synonyms.clone(),
+            synonyms_given: self.synonyms_given,
         })
     }
 }
@@ -1645,8 +1660,9 @@ pub fn annotate(
             match vfs.next()? {
                 Some(v) if matches(&v) => break v,
                 Some(_) => continue,
+                // e.g. VEP renamed chromosome M to MT; the pipeline then lets VEP do it all
                 None => {
-                    return Err(err(format!(
+                    return Err(unsupported(format!(
                         "no VCF variant for VEP row {} {} (is this the VCF VEP was run on?)",
                         row[i_up], row[i_loc]
                     )))

@@ -188,7 +188,7 @@ enum Command {
         /// MAX_AF, ...) from its all_vars.gz files, replacing the input's
         #[arg(long)]
         known_variants: Option<PathBuf>,
-        /// worker threads (0: one per core); each keeps one handle per lookup file
+        /// worker threads (0: one per core); each opens its own handles on the lookup files
         #[arg(long, default_value_t = 0)]
         threads: usize,
         #[arg(long)]

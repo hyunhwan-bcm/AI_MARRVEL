@@ -133,6 +133,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - o Decision: option C (fastVEP + VEP-104 compatibility layer) first, then B (faithful port of VEP 104)
 - × C step 2: co-located known variants in Rust (`aim vep-annotate --known-variants <cache>`; CSI support in the tabix reader)
   - – byte-identical to seeded VEP: 218,432 ClinVar rows, 136,667 rows sampled from the cache, 156,053 multi-allelic rows, `chr` names, synthetic golden; 2 s for 17.5k variants
-  - ! `MAX_AF_POPS` order is Perl hash order: fixed with `PERL_HASH_SEED=0` (reproduced), random without
+  - ! `MAX_AF_POPS` order is Perl hash order: fixed with `PERL_HASH_SEED=0` for a given Perl build (5.32 reproduced; 5.26 differs), random without
+  - × Review of #58: `.csi` preferred over `.tbi` as htslib does; the cache's `chr_synonyms.txt` used when `--chr-synonyms` is not given (as VEP does); rows matching no VCF line exit 3 (pipeline falls back to VEP)
 - • C step 3: regulatory / motif rows from the 104 cache
 - • C step 4: fastVEP compatibility layer (terms, VEP 104 rules, formatting)

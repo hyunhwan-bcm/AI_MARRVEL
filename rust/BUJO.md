@@ -142,4 +142,10 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - ! the variant grouping matched unnamed variants on `chr_pos_REF` only: rows of two lines at one position merged (harmless for lookups, wrong for inserted rows); now the whole allele string, and a repeated feature+allele starts a new variant
   - – AIM reads no `MOTIF_*` column; motif rows matter through IMPACT (`TFBS_ablation` = MODERATE: 2 of 17,533 ClinVar variants)
   - – 17.5k variants: 42 s / 2.3 GB with 4 parses at once, 77 s at 2 (chosen: a chr17 task 3.5 s / 1.3 GB)
-- • C step 4: fastVEP compatibility layer (terms, VEP 104 rules, formatting)
+- × C step 4a: fastVEP on VEP 104 cache transcripts (chrysalis) with VEP 104's predicates
+  - – fastVEP alone (VEP 104 GFF3): 87 rows differ in Consequence of 211,014; on cache transcripts 81; the rest are VEP 105+ rules and fastVEP-only cases
+  - ! VEP's coordinates follow Ensembl's mapper (insertions at exon/CDS edges map to one flank, so `coding` can be false); ported `TranscriptMapper`
+  - ! VEP evaluates consequences before its HGVS 3' shift, which later rewrites the shared transcript-level coordinates (multi-allelic lines print shifted CDS positions)
+  - – Consequence + IMPACT + 27 transcript columns identical on 545,158 rows and 23 chromosome tasks
+- • C step 4b: HGVSc/HGVSp (VEP's genomic 3' shift, cache FASTA), SIFT/PolyPhen, DOMAINS, miRNA
+- • C step 4c: whole rows from the VCF (`aim vep`): variant columns, intergenic rows, header

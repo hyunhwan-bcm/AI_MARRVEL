@@ -117,6 +117,22 @@ Rust port are added next to the originals, never in place of them.
   byte-identical against seeded VEP, regulatory rows removed and regenerated together with the
   known-variant columns: 218,432 ClinVar rows, 136,667 cache-sampled rows, 156,053 multi-allelic
   rows, 23 per-chromosome tasks, duplicated and unnamed VCF lines, and a synthetic golden.
+- Transcript rows without VEP (`aim vep-annotate --transcripts <cache>`, step 4 of #57, for
+  checking only so far): fastVEP 0.4.0 (a pinned git dependency, Apache-2.0) predicts on
+  transcripts read from the VEP 104 cache itself (`vep_transcripts.rs`), so the transcript set,
+  symbols and cross-references are VEP's and no GFF3 or FASTA is needed. fastVEP follows
+  VEP 105+ and differs in a few more cases, so `vep_consequence.rs` recomputes, with VEP 104's
+  own predicates, the coding terms (on fastVEP's codons and peptides, which equal VEP's), the
+  UTR and non-coding-transcript terms, `transcript_ablation` and the tier rules; the
+  coordinates they use come from a port of Ensembl's `TranscriptMapper` (`vep_mapper.rs`),
+  since VEP's rules for insertions at exon and CDS edges follow its mapper. Checked against
+  seeded VEP on 545,158 transcript rows (6 sets) and 23 chromosome tasks: Consequence, IMPACT
+  and 27 more columns identical. Two known differences: on multi-allelic indel lines VEP prints
+  CDS_position, Protein_position and Amino_acids after another allele's HGVS 3' shift (36, 36
+  and 22 of 156,053 rows; AIM reads Amino_acids only for REVEL, which matches SNVs), and HGNC_ID for a symbol whose ID-bearing transcripts are in chunks the variant
+  does not load comes from the gene's chunks (VEP: only if its batch loads them). Not yet:
+  HGVSc/HGVSp (needs VEP's 3' shift on the genome, so the cache's FASTA), SIFT, PolyPhen,
+  DOMAINS, miRNA.
 
 - The published hg38 gnomAD genome index (`vep/hg38/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz.tbi`)
   does not match its data file (every lookup fails with "Invalid BGZF header"; a freshly built

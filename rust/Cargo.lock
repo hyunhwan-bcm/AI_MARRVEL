@@ -45,6 +45,9 @@ name = "aim-core"
 version = "0.1.0"
 dependencies = [
  "chrysalis",
+ "fastvep-consequence",
+ "fastvep-core",
+ "fastvep-genome",
  "flate2",
  "noodles-bgzf",
  "noodles-core",
@@ -736,6 +739,34 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
+name = "fastvep-consequence"
+version = "0.4.0"
+source = "git+https://github.com/Huang-lab/fastVEP?tag=v0.4.0#d728c46fbd6745de81eabb1b5c072aa865f8631d"
+dependencies = [
+ "fastvep-core",
+ "fastvep-genome",
+ "log",
+]
+
+[[package]]
+name = "fastvep-core"
+version = "0.4.0"
+source = "git+https://github.com/Huang-lab/fastVEP?tag=v0.4.0#d728c46fbd6745de81eabb1b5c072aa865f8631d"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "fastvep-genome"
+version = "0.4.0"
+source = "git+https://github.com/Huang-lab/fastVEP?tag=v0.4.0#d728c46fbd6745de81eabb1b5c072aa865f8631d"
+dependencies = [
+ "fastvep-core",
+ "serde",
+]
 
 [[package]]
 name = "find-msvc-tools"

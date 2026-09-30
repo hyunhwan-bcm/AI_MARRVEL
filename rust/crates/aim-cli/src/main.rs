@@ -192,6 +192,11 @@ enum Command {
         /// (RegulatoryFeature / MotifFeature) from its _reg.gz chunks, replacing the input's
         #[arg(long)]
         regulatory: Option<PathBuf>,
+        /// the VEP cache for the assembly: recompute the transcript rows' columns (Consequence,
+        /// IMPACT, positions, alleles, gene and transcript fields) with fastVEP on its
+        /// transcripts and VEP 104's rules; for checking against VEP, not yet for the pipeline
+        #[arg(long, hide = true)]
+        transcripts: Option<PathBuf>,
         /// worker threads (0: one per core); each opens its own handles on the lookup files
         #[arg(long, default_value_t = 0)]
         threads: usize,
@@ -453,6 +458,7 @@ fn run(cli: Cli) -> Result<()> {
             dir,
             known_variants,
             regulatory,
+            transcripts,
             threads,
             out,
         } => {
@@ -468,6 +474,9 @@ fn run(cli: Cli) -> Result<()> {
             }
             if let Some(cache) = &regulatory {
                 lookups = lookups.with_regulatory(cache)?;
+            }
+            if let Some(cache) = &transcripts {
+                lookups = lookups.with_transcripts(cache)?;
             }
             let mut w = BufWriter::new(File::create(&out)?);
             // VEP reads plain or gzip-compressed VCF

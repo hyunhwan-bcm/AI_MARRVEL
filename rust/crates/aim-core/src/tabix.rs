@@ -43,7 +43,8 @@ pub struct Hits {
 }
 
 impl Tabix {
-    /// Opens `path` with its `.tbi` index, or else its `.csi` index (VEP's known-variant files).
+    /// Opens `path` with its index: `.csi` when there is one (htslib's preference; VEP's
+    /// known-variant files have only that), else `.tbi`.
     pub fn open(path: &Path) -> io::Result<Tabix> {
         let with_ext = |ext: &str| {
             let mut p = path.as_os_str().to_owned();
@@ -51,11 +52,10 @@ impl Tabix {
             std::path::PathBuf::from(p)
         };
         let (tbi, csi) = (with_ext(".tbi"), with_ext(".csi"));
-        let index: std::sync::Arc<dyn BinningIndex + Send + Sync> = if tbi.exists() || !csi.exists()
-        {
-            std::sync::Arc::new(noodles_tabix::fs::read(&tbi)?)
-        } else {
+        let index: std::sync::Arc<dyn BinningIndex + Send + Sync> = if csi.exists() {
             std::sync::Arc::new(noodles_csi::fs::read(&csi)?)
+        } else {
+            std::sync::Arc::new(noodles_tabix::fs::read(&tbi)?)
         };
         let header = index.header().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "index without a tabix header")

@@ -91,8 +91,10 @@ Rust port are added next to the originals, never in place of them.
   (`vep_existing.rs`), for when something other than VEP produces the rows. It is not used by the
   pipeline yet. Matching uses the per-sample variant's whole allele set: when one rs ID sits on
   two cache lines, which line is kept depends on the sample's alleles (reproduced).
-  `MAX_AF_POPS` lists tied populations in Perl's `keys %FREQUENCY_KEYS` order, which is fixed
-  under `PERL_HASH_SEED=0` (esp, exac, gnomad, af, 1kg) and random without it. A `CLIN_SIG` with
+  `MAX_AF_POPS` lists tied populations in Perl's `keys %FREQUENCY_KEYS` order: with
+  `PERL_HASH_SEED=0` it is fixed for a given Perl build (5.32, the native VEP environment: esp,
+  exac, gnomad, af, 1kg, used here; bioconda's 5.26: af, exac, esp, 1kg, gnomad), and random
+  without the seed. AIM does not read the column. A `CLIN_SIG` with
   several allele-specific values for one allele would be joined in hash order (written sorted);
   no such case occurs in the 104 cache sample checked. Checked byte-identical against seeded VEP
   on 218,432 ClinVar rows, 136,667 rows sampled from the cache (indels, multi-allelic, HGMD,

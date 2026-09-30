@@ -10,8 +10,9 @@
 //!
 //! Two outputs follow Perl's hash order:
 //! - `MAX_AF_POPS` lists tied populations in the order Perl returns `keys %FREQUENCY_KEYS`. With
-//!   `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0` (set by AIM's pipeline) that order is fixed, and is
-//!   used here; an unseeded VEP run picks a random one.
+//!   `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0` (set by AIM's pipeline) that order is fixed for a
+//!   given Perl build; this uses Perl 5.32's (the native VEP environment's). Perl 5.26
+//!   (bioconda's VEP 104.3) gives another order, and an unseeded run a random one.
 //! - `CLIN_SIG`, when known variants give one allele several different allele-specific values,
 //!   joins them in the order of a per-row hash; they are written sorted here.
 
@@ -24,7 +25,8 @@ use crate::tabix::Tabix;
 use crate::vep_annotate::{directions, perl_num, perl_split, source_chr_name, trim, Synonyms, Vf};
 
 /// `%FREQUENCY_KEYS`, groups in the order `keys` gives with `PERL_HASH_SEED=0` and
-/// `PERL_PERTURB_KEYS=0` (Perl 5.32): af_esp, af_exac, af_gnomad, af, af_1kg. The flag says
+/// `PERL_PERTURB_KEYS=0` on Perl 5.32: af_esp, af_exac, af_gnomad, af, af_1kg (seeded Perl 5.26
+/// gives af, af_exac, af_esp, af_1kg, af_gnomad). The flag says
 /// whether AIM's options (`--everything --af_gnomad`) print the group; `--max_af` (on with
 /// `--everything`) uses every group.
 const FREQUENCY_KEYS: &[(&str, bool)] = &[
@@ -70,26 +72,29 @@ fn freq_column(key: &str) -> String {
 }
 
 /// Every column this module sets, in no particular order.
-pub fn columns() -> Vec<String> {
-    let mut c: Vec<String> = [
-        "Existing_variation",
-        "CLIN_SIG",
-        "SOMATIC",
-        "PHENO",
-        "PUBMED",
-        "MAX_AF",
-        "MAX_AF_POPS",
-    ]
-    .iter()
-    .map(|s| (*s).to_owned())
-    .collect();
-    c.extend(
-        FREQUENCY_KEYS
-            .iter()
-            .filter(|(_, printed)| *printed)
-            .map(|(k, _)| freq_column(k)),
-    );
-    c
+pub fn columns() -> &'static [String] {
+    static COLUMNS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    COLUMNS.get_or_init(|| {
+        let mut c: Vec<String> = [
+            "Existing_variation",
+            "CLIN_SIG",
+            "SOMATIC",
+            "PHENO",
+            "PUBMED",
+            "MAX_AF",
+            "MAX_AF_POPS",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        c.extend(
+            FREQUENCY_KEYS
+                .iter()
+                .filter(|(_, printed)| *printed)
+                .map(|(k, _)| freq_column(k)),
+        );
+        c
+    })
 }
 
 /// Where `parse_variation` finds each field in a cache line.
@@ -172,7 +177,8 @@ pub struct KnownVariants {
     /// Files opened so far by any handle, so that each index is read once.
     opened: Arc<Mutex<HashMap<String, Option<Tabix>>>>,
     /// This handle's readers, most recently used last; at most [`OPEN_PER_HANDLE`] (VEP keeps
-    /// five), so that many threads do not run out of file descriptors.
+    /// five open), so that many worker threads do not run out of file descriptors (`opened`
+    /// adds one reader per chromosome used).
     files: Vec<(String, Option<Tabix>)>,
 }
 
@@ -432,7 +438,7 @@ impl Colocated {
     /// The co-located columns of the row for `allele` (None prints as `-`).
     pub fn row(&self, allele: &str) -> Vec<(String, Option<String>)> {
         let mut out: Vec<(String, Option<String>)> =
-            columns().into_iter().map(|c| (c, None)).collect();
+            columns().iter().map(|c| (c.clone(), None)).collect();
         if self.known.is_empty() {
             return out;
         }

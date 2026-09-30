@@ -1,0 +1,3 @@
+species	homo_sapiens
+assembly	GRCh38
+regulatory	1

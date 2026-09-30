@@ -44,6 +44,7 @@ dependencies = [
 name = "aim-core"
 version = "0.1.0"
 dependencies = [
+ "chrysalis",
  "flate2",
  "noodles-bgzf",
  "noodles-core",
@@ -431,6 +432,26 @@ checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
 dependencies = [
  "chrono",
  "phf",
+]
+
+[[package]]
+name = "chrysalis"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc9915f0aefc1457e58eee24228eaa70d1c55cee097e548fc104036d4029eec8"
+dependencies = [
+ "chrysalis-derive",
+]
+
+[[package]]
+name = "chrysalis-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ead56ee5de099bcfb644c0266845d98d2321fe22019f2edc8d22cfdec6cf469"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

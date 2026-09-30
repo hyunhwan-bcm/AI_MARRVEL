@@ -215,18 +215,24 @@ pub struct Vf {
     pub end: i64,
     /// First allele of the (trimmed) allele string.
     pub ref_allele: String,
+    /// The line's alternate alleles, trimmed like the reference.
+    pub alts: Vec<String>,
     pub structural: bool,
 }
 
 impl Vf {
     /// Whether `up` is this variant's `Uploaded_variation`. An ID of `.` (or none) is printed as
     /// `chr_start_<the sample's allele string>` (OutputFactory.pm:869, Parser.pm:511), whose
-    /// alternates are in Perl hash order for a sample with two, so only the prefix is fixed.
+    /// alternates are some of the line's, in Perl hash order for a sample with two.
     fn uploaded_name_matches(&self, up: &str) -> bool {
         if self.name.is_empty() || self.name == "." {
             let prefix = format!("{}_{}_{}", self.chr, self.start, self.ref_allele);
-            up.strip_prefix(prefix.as_str())
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+            up.strip_prefix(prefix.as_str()).is_some_and(|rest| {
+                rest.is_empty()
+                    || rest.strip_prefix('/').is_some_and(|alts| {
+                        alts.split('/').all(|a| self.alts.iter().any(|x| x == a))
+                    })
+            })
         } else {
             up == self.name
         }
@@ -271,6 +277,7 @@ fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
     let mut start = pos;
     let end = pos + r.len() as i64 - 1;
     let mut ref_allele = r.to_owned();
+    let mut trimmed_alts: Vec<String> = alts.iter().map(|a| (*a).to_owned()).collect();
     if !structural && alts.first() != Some(&".") {
         let is_indel = alts
             .iter()
@@ -284,16 +291,37 @@ fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
                     .collect();
                 if firsts.len() == 1 {
                     ref_allele = perl_or_dash(&r[1.min(r.len())..]);
+                    // `substr($alt, 1) unless /\*/`, then '' becomes '-'
+                    trimmed_alts = alts
+                        .iter()
+                        .map(|a| {
+                            let t = if a.contains('*') {
+                                a
+                            } else {
+                                a.get(1..).unwrap_or("")
+                            };
+                            if t.is_empty() {
+                                "-".to_owned()
+                            } else {
+                                t.to_owned()
+                            }
+                        })
+                        .collect();
                     start += 1;
                 }
             }
         } else if is_indel && r.get(..1) == alts[0].get(..1) {
             ref_allele = perl_or_dash(&r[1.min(r.len())..]);
+            trimmed_alts = vec![perl_or_dash(alts[0].get(1..).unwrap_or(""))];
             start += 1;
         }
     }
     // validate_vf upper-cases the allele string after the trimming above (Parser.pm:587)
     let ref_allele = ref_allele.to_ascii_uppercase();
+    let alts: Vec<String> = trimmed_alts
+        .iter()
+        .map(|a| a.to_ascii_uppercase())
+        .collect();
     let name = ids.split(';').next().unwrap_or("").to_owned();
     let base = Vf {
         name,
@@ -302,6 +330,7 @@ fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
         start,
         end,
         ref_allele,
+        alts,
         structural,
     };
     Ok(if samples.is_empty() {
@@ -1424,6 +1453,8 @@ pub struct Lookups {
     plugins: Vec<Plugin>,
     /// Recomputes VEP's co-located known-variant columns (see [`crate::vep_existing`]).
     known: Option<crate::vep_existing::KnownVariants>,
+    /// Regenerates VEP's regulatory and motif rows (see [`crate::vep_regulatory`]).
+    regulatory: Option<crate::vep_regulatory::Regulatory>,
     synonyms: Synonyms,
     /// Whether `synonyms` came from the caller (else the VEP cache's file is used, as VEP does).
     synonyms_given: bool,
@@ -1460,6 +1491,7 @@ impl Lookups {
                 .map(|p| Plugin::open(p, base, grch37))
                 .collect::<io::Result<_>>()?,
             known: None,
+            regulatory: None,
             synonyms,
             synonyms_given,
         })
@@ -1485,6 +1517,14 @@ impl Lookups {
         })
     }
 
+    /// Also (re)generates the regulatory and motif rows (RegulatoryFeature / MotifFeature) from
+    /// the VEP cache directory `cache`, replacing any in the input.
+    pub fn with_regulatory(mut self, cache: &Path) -> io::Result<Lookups> {
+        let synonyms = self.cache_synonyms(cache)?;
+        self.regulatory = Some(crate::vep_regulatory::Regulatory::open(cache, synonyms)?);
+        Ok(self)
+    }
+
     /// The same lookups with their own file handles (indexes are shared).
     fn try_clone(&self) -> io::Result<Lookups> {
         Ok(Lookups {
@@ -1502,6 +1542,11 @@ impl Lookups {
                 .known
                 .as_ref()
                 .map(crate::vep_existing::KnownVariants::try_clone)
+                .transpose()?,
+            regulatory: self
+                .regulatory
+                .as_ref()
+                .map(crate::vep_regulatory::Regulatory::try_clone)
                 .transpose()?,
             synonyms: self.synonyms.clone(),
             synonyms_given: self.synonyms_given,
@@ -1603,6 +1648,10 @@ pub fn annotate(
     let individual = i_ind.is_some();
     let mut vfs = VcfVfs::new(vcf, individual)?;
     let field_ix: Vec<Option<usize>> = fields.iter().map(|f| col(f)).collect();
+    let reg_cols = RegCols::new(&base_cols);
+    if lookups.regulatory.is_some() {
+        reg_cols.check()?;
+    }
     let layout = RowLayout {
         fields: &fields,
         field_ix: &field_ix,
@@ -1611,6 +1660,7 @@ pub fn annotate(
         consequence: i_csq,
         amino_acids: i_aa,
         symbol: i_sym,
+        reg: &reg_cols,
     };
     // one set of open files per worker thread; variants are independent, so batches of them
     // are annotated in parallel and written back in input order
@@ -1625,6 +1675,8 @@ pub fn annotate(
         threads,
     };
     let mut groups: Vec<(Vf, Vec<String>)> = Vec::new();
+    let mut group_keys: HashSet<(String, String, String)> = HashSet::new();
+    let i_feature = col("Feature");
     let mut n_rows = 0usize;
     for l in lines {
         let l = l?;
@@ -1646,11 +1698,20 @@ pub fn annotate(
             v.uploaded_name_matches(row[i_up])
                 && (v.structural || (v.sample.as_deref() == sample && v.location() == row[i_loc]))
         };
-        if groups.last().is_some_and(|(v, _)| matches(v)) {
+        // one variant never has two rows for the same feature and allele: a repeat starts the
+        // next variant (a duplicated VCF line)
+        let key = (
+            row[i_ft].to_owned(),
+            i_feature.map_or("", |i| row[i]).to_owned(),
+            row[i_allele].to_owned(),
+        );
+        if groups.last().is_some_and(|(v, _)| matches(v)) && group_keys.insert(key.clone()) {
             groups.last_mut().unwrap().1.push(l);
             n_rows += 1;
             continue;
         }
+        group_keys.clear();
+        group_keys.insert(key);
         if n_rows >= BATCH_ROWS {
             write_groups(&groups, lookups, &pool, &layout, out)?;
             groups.clear();
@@ -1693,6 +1754,143 @@ struct RowLayout<'a> {
     consequence: usize,
     amino_acids: usize,
     symbol: usize,
+    reg: &'a RegCols,
+}
+
+/// The input columns a regulatory or motif row sets, and those it shares with the variant's
+/// other rows of the same allele.
+struct RegCols {
+    feature: Option<usize>,
+    feature_type: Option<usize>,
+    consequence: Option<usize>,
+    impact: Option<usize>,
+    biotype: Option<usize>,
+    strand: Option<usize>,
+    motif_name: Option<usize>,
+    motif_pos: Option<usize>,
+    high_inf_pos: Option<usize>,
+    motif_score_change: Option<usize>,
+    transcription_factors: Option<usize>,
+    /// Variant and allele columns (location, sample, variant class, known variants).
+    shared: Vec<usize>,
+}
+
+impl RegCols {
+    fn new(cols: &[String]) -> RegCols {
+        let at = |n: &str| cols.iter().position(|c| c == n);
+        let mut shared_names: Vec<String> = [
+            "Uploaded_variation",
+            "Location",
+            "Allele",
+            "IND",
+            "ZYG",
+            "VARIANT_CLASS",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        shared_names.extend(crate::vep_existing::columns().iter().cloned());
+        RegCols {
+            feature: at("Feature"),
+            feature_type: at("Feature_type"),
+            consequence: at("Consequence"),
+            impact: at("IMPACT"),
+            biotype: at("BIOTYPE"),
+            strand: at("STRAND"),
+            motif_name: at("MOTIF_NAME"),
+            motif_pos: at("MOTIF_POS"),
+            high_inf_pos: at("HIGH_INF_POS"),
+            motif_score_change: at("MOTIF_SCORE_CHANGE"),
+            transcription_factors: at("TRANSCRIPTION_FACTORS"),
+            shared: shared_names.iter().filter_map(|n| at(n)).collect(),
+        }
+    }
+
+    fn check(&self) -> io::Result<()> {
+        for (name, c) in [
+            ("Feature", self.feature),
+            ("Feature_type", self.feature_type),
+            ("Consequence", self.consequence),
+            ("IMPACT", self.impact),
+        ] {
+            if c.is_none() {
+                return Err(err(format!("VEP output lacks column {name}")));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `rows` with its regulatory and motif rows replaced by those computed from the cache, placed
+/// where VEP puts them: after the transcript rows, before an intergenic row.
+fn with_regulatory_rows(
+    vf: &Vf,
+    rows: &[String],
+    reg: &mut crate::vep_regulatory::Regulatory,
+    layout: &RowLayout,
+) -> io::Result<Vec<String>> {
+    let c = layout.reg;
+    let ft = layout.feature_type;
+    let kept: Vec<Vec<&str>> = rows
+        .iter()
+        .map(|l| l.split('\t').collect::<Vec<_>>())
+        .filter(|r| r[ft] != "RegulatoryFeature" && r[ft] != "MotifFeature")
+        .collect();
+    // the variant's alleles, in VEP's order (each feature lists them in the same order)
+    let mut alts: Vec<&str> = Vec::new();
+    for r in &kept {
+        if !alts.contains(&r[layout.allele]) {
+            alts.push(r[layout.allele]);
+        }
+    }
+    let new = reg.rows(vf, &alts)?;
+    let at = kept
+        .iter()
+        .position(|r| r[ft] != "Transcript")
+        .unwrap_or(kept.len());
+    let n_cols = kept.first().map_or(0, Vec::len);
+    let mut out: Vec<String> = kept[..at].iter().map(|r| r.join("\t")).collect();
+    for r in &new {
+        let template = kept
+            .iter()
+            .find(|k| k[layout.allele] == r.allele)
+            .ok_or_else(|| err(format!("no row for allele {} of {}", r.allele, vf.name)))?;
+        let mut row: Vec<String> = vec!["-".to_owned(); n_cols];
+        for &i in &c.shared {
+            row[i] = template[i].to_owned();
+        }
+        let mut set = |i: Option<usize>, v: String| {
+            if let Some(i) = i {
+                row[i] = v;
+            }
+        };
+        set(c.feature, r.feature.clone());
+        set(c.feature_type, r.feature_type.to_owned());
+        set(c.consequence, r.consequence.clone());
+        set(c.impact, r.impact.to_owned());
+        if let Some(b) = &r.biotype {
+            set(c.biotype, b.clone());
+        }
+        if let Some(m) = &r.motif {
+            set(c.strand, m.strand.to_string());
+            set(c.motif_name, m.name.clone());
+            if let Some(p) = m.pos {
+                set(c.motif_pos, p.to_string());
+            }
+            set(
+                c.high_inf_pos,
+                if m.high_inf_pos { "Y" } else { "N" }.to_owned(),
+            );
+            if let Some(s) = &m.score_change {
+                set(c.motif_score_change, s.clone());
+            }
+            // an empty list prints as an empty field
+            set(c.transcription_factors, m.transcription_factors.join(","));
+        }
+        out.push(row.join("\t"));
+    }
+    out.extend(kept[at..].iter().map(|r| r.join("\t")));
+    Ok(out)
 }
 
 fn write_groups(
@@ -1735,6 +1933,14 @@ fn annotate_variant(
     lookups: &mut Lookups,
     layout: &RowLayout,
 ) -> io::Result<String> {
+    let regenerated;
+    let rows = match lookups.regulatory.as_mut() {
+        Some(reg) => {
+            regenerated = with_regulatory_rows(vf, rows, reg, layout)?;
+            &regenerated[..]
+        }
+        None => rows,
+    };
     // one cache per plugin instance
     let mut caches: Vec<PluginCache> = lookups
         .plugins

@@ -188,6 +188,10 @@ enum Command {
         /// MAX_AF, ...) from its all_vars.gz files, replacing the input's
         #[arg(long)]
         known_variants: Option<PathBuf>,
+        /// the VEP cache for the assembly: regenerate the regulatory and motif rows
+        /// (RegulatoryFeature / MotifFeature) from its _reg.gz chunks, replacing the input's
+        #[arg(long)]
+        regulatory: Option<PathBuf>,
         /// worker threads (0: one per core); each opens its own handles on the lookup files
         #[arg(long, default_value_t = 0)]
         threads: usize,
@@ -448,6 +452,7 @@ fn run(cli: Cli) -> Result<()> {
             chr_synonyms,
             dir,
             known_variants,
+            regulatory,
             threads,
             out,
         } => {
@@ -460,6 +465,9 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             if let Some(cache) = &known_variants {
                 lookups = lookups.with_known_variants(cache)?;
+            }
+            if let Some(cache) = &regulatory {
+                lookups = lookups.with_regulatory(cache)?;
             }
             let mut w = BufWriter::new(File::create(&out)?);
             // VEP reads plain or gzip-compressed VCF

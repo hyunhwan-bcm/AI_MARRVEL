@@ -19,3 +19,5 @@ noodles-tabix = "0.67.0"
 noodles-bgzf = "0.51.0"
 noodles-csi = "0.61.0"
 noodles-core = "0.20.0"
+# Perl Storable reader, for the VEP cache's serialised chunks
+chrysalis = "0.1.0"

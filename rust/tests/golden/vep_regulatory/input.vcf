@@ -1,0 +1,17 @@
+##fileformat=VCFv4.2
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	S1	S2
+21	1102	snv_strong	T	A	50	PASS	.	GT	0/1	0/0
+21	1104	snv_flat	G	A	50	PASS	.	GT	0/1	1/1
+21	1107	snv_both	G	A,C	50	PASS	.	GT	1/2	0/1
+21	1106	mnv	CG	AT	50	PASS	.	GT	0/1	0/0
+21	1103	ins	C	CG	50	PASS	.	GT	0/1	0/0
+21	1097	del_before	CCACC	C	50	PASS	.	GT	0/1	0/0
+21	1109	snv_last	A	C	50	PASS	.	GT	0/1	0/0
+21	1202	no_matrix	C	A	50	PASS	.	GT	0/1	0/0
+21	1500	two_reg	A	C	50	PASS	.	GT	0/1	0/0
+21	2997	del_ablation	TATTATAACCCAAT	T	50	PASS	.	GT	0/1	0/0
+21	3002	snv_tfbs	T	A	50	PASS	.	GT	0/1	0/0
+21	1000000	boundary	T	A	50	PASS	.	GT	0/1	0/0
+21	1000505	spill	G	A	50	PASS	.	GT	0/1	0/0
+22	5000	nochunk	A	C	50	PASS	.	GT	0/1	0/0

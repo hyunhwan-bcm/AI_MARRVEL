@@ -135,5 +135,10 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – byte-identical to seeded VEP: 218,432 ClinVar rows, 136,667 rows sampled from the cache, 156,053 multi-allelic rows, `chr` names, synthetic golden; 2 s for 17.5k variants
   - ! `MAX_AF_POPS` order is Perl hash order: fixed with `PERL_HASH_SEED=0` for a given Perl build (5.32 reproduced; 5.26 differs), random without
   - × Review of #58: `.csi` preferred over `.tbi` as htslib does; the cache's `chr_synonyms.txt` used when `--chr-synonyms` is not given (as VEP does); rows matching no VCF line exit 3 (pipeline falls back to VEP)
-- • C step 3: regulatory / motif rows from the 104 cache
+- × C step 3: regulatory / motif rows from the 104 cache (`aim vep-annotate --regulatory <cache>`; Storable read with the `chrysalis` crate)
+  - – byte-identical to seeded VEP after removing and regenerating the rows: 218,432 ClinVar rows, 136,667 cache-sampled rows, 156,053 multi-allelic rows, 23 chromosome tasks, duplicate/unnamed lines, synthetic golden
+  - ! motifs can sit up to ~4 kb outside the chunk that stores them: VEP finds them only if a variant of the same batch loads that chunk (batch-dependent); the port reads the neighbouring chunk near boundaries
+  - ! the variant grouping matched unnamed variants on `chr_pos_REF` only: rows of two lines at one position merged (harmless for lookups, wrong for inserted rows); now the whole allele string, and a repeated feature+allele starts a new variant
+  - – AIM reads no MOTIF_* column; motif rows matter through IMPACT (`TFBS_ablation` = MODERATE: 2 of 17,533 ClinVar variants)
+  - – 17.5k variants: 42 s / 2.3 GB with 4 parses at once, 77 s at 2 (chosen: a chr17 task 3.5 s / 1.3 GB)
 - • C step 4: fastVEP compatibility layer (terms, VEP 104 rules, formatting)

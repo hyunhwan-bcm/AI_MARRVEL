@@ -21,7 +21,7 @@ use noodles_csi::BinningIndex;
 pub struct Tabix {
     path: std::path::PathBuf,
     reader: bgzf::io::Reader<File>,
-    index: std::sync::Arc<noodles_tabix::Index>,
+    index: std::sync::Arc<dyn BinningIndex + Send + Sync>,
     layout: std::sync::Arc<Layout>,
     meta: u8,
 }
@@ -43,12 +43,22 @@ pub struct Hits {
 }
 
 impl Tabix {
+    /// Opens `path` with its `.tbi` index, or else its `.csi` index (VEP's known-variant files).
     pub fn open(path: &Path) -> io::Result<Tabix> {
-        let mut tbi = path.as_os_str().to_owned();
-        tbi.push(".tbi");
-        let index = noodles_tabix::fs::read(&tbi)?;
+        let with_ext = |ext: &str| {
+            let mut p = path.as_os_str().to_owned();
+            p.push(ext);
+            std::path::PathBuf::from(p)
+        };
+        let (tbi, csi) = (with_ext(".tbi"), with_ext(".csi"));
+        let index: std::sync::Arc<dyn BinningIndex + Send + Sync> = if tbi.exists() || !csi.exists()
+        {
+            std::sync::Arc::new(noodles_tabix::fs::read(&tbi)?)
+        } else {
+            std::sync::Arc::new(noodles_csi::fs::read(&csi)?)
+        };
         let header = index.header().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "tabix index without header")
+            io::Error::new(io::ErrorKind::InvalidData, "index without a tabix header")
         })?;
         let names = header
             .reference_sequence_names()
@@ -74,7 +84,7 @@ impl Tabix {
             reader: bgzf::io::Reader::new(File::open(path)?),
             meta: header.line_comment_prefix(),
             layout: std::sync::Arc::new(layout),
-            index: std::sync::Arc::new(index),
+            index,
         })
     }
 

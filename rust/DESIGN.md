@@ -85,6 +85,18 @@ Rust port are added next to the originals, never in place of them.
   and overwrites VEP's `APPRIS`/`TSL`; REVEL takes the first row with the same alternate amino
   acid whatever the transcript; custom VCFs ignore FILTER and join all matching records;
   `gnomAD_AF` and `CLIN_SIG` come from the VEP cache, not the custom files.
+- VEP's co-located known variants (`Existing_variation`, `CLIN_SIG`, `SOMATIC`, `PHENO`,
+  `PUBMED`, the 1000 Genomes / ESP / gnomAD exome frequencies, `MAX_AF`, `MAX_AF_POPS`) are
+  reproduced by `aim vep-annotate --known-variants <cache>` from the cache's `all_vars.gz`
+  (`vep_existing.rs`), for when something other than VEP produces the rows. It is not used by the
+  pipeline yet. Matching uses the per-sample variant's whole allele set: when one rs ID sits on
+  two cache lines, which line is kept depends on the sample's alleles (reproduced).
+  `MAX_AF_POPS` lists tied populations in Perl's `keys %FREQUENCY_KEYS` order, which is fixed
+  under `PERL_HASH_SEED=0` (esp, exac, gnomad, af, 1kg) and random without it. A `CLIN_SIG` with
+  several allele-specific values for one allele would be joined in hash order (written sorted);
+  no such case occurs in the 104 cache sample checked. Checked byte-identical against seeded VEP
+  on 218,432 ClinVar rows, 136,667 rows sampled from the cache (indels, multi-allelic, HGMD,
+  COSMIC, failed entries), 156,053 multi-allelic rows, `chr`-named input and a synthetic golden.
 
 - The published hg38 gnomAD genome index (`vep/hg38/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz.tbi`)
   does not match its data file (every lookup fails with "Invalid BGZF header"; a freshly built

@@ -1,7 +1,7 @@
 //! Rust vs VEP 104.3: the regulatory and motif rows (RegulatoryFeature / MotifFeature, with
 //! their consequences and MOTIF_* columns) regenerated from the offline cache's `_reg.gz` chunks.
 //!
-//! `vep_regulatory/` holds VEP's output on 14 lines and a synthetic cache (no real data);
+//! `vep_regulatory/` holds VEP's output on 17 lines and a synthetic cache (no real data);
 //! `rust/tools/make_goldens_vep_regulatory.pl` writes them and documents the VEP command. The
 //! test removes those rows from VEP's output and compares the regenerated file with it, byte
 //! for byte.

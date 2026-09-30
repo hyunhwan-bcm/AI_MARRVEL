@@ -217,10 +217,20 @@ pub struct Vf {
     pub ref_allele: String,
     /// The line's alternate alleles, trimmed like the reference.
     pub alts: Vec<String>,
+    /// With `--individual`: the sample's genotype alleles other than the reference and `*`
+    /// (`create_individual_VariationFeatures`); None without a GT field.
+    pub sample_alts: Option<Vec<String>>,
     pub structural: bool,
 }
 
 impl Vf {
+    /// Whether this variant can have rows for `allele`.
+    fn allows(&self, allele: &str) -> bool {
+        self.sample_alts
+            .as_ref()
+            .is_none_or(|a| a.iter().any(|x| x == allele))
+    }
+
     /// Whether `up` is this variant's `Uploaded_variation`. An ID of `.` (or none) is printed as
     /// `chr_start_<the sample's allele string>` (OutputFactory.pm:869, Parser.pm:511), whose
     /// alternates are some of the line's, in Perl hash order for a sample with two.
@@ -323,6 +333,9 @@ fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
         .map(|a| a.to_ascii_uppercase())
         .collect();
     let name = ids.split(';').next().unwrap_or("").to_owned();
+    let gt_at = f
+        .get(8)
+        .and_then(|fmt| fmt.split(':').position(|k| k == "GT"));
     let base = Vf {
         name,
         sample: None,
@@ -331,6 +344,7 @@ fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
         end,
         ref_allele,
         alts,
+        sample_alts: None,
         structural,
     };
     Ok(if samples.is_empty() {
@@ -338,9 +352,33 @@ fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
     } else {
         samples
             .iter()
-            .map(|s| Vf {
-                sample: Some(s.clone()),
-                ..base.clone()
+            .enumerate()
+            .map(|(i, s)| {
+                let sample_alts = gt_at
+                    .and_then(|g| f.get(9 + i)?.split(':').nth(g))
+                    .map(|gt| {
+                        let mut out: Vec<String> = Vec::new();
+                        for idx in gt.split(['/', '|', '\\']) {
+                            let a = match idx.parse::<usize>() {
+                                Ok(0) => continue,
+                                Ok(k) => base.alts.get(k - 1),
+                                Err(_) => None,
+                            };
+                            if let Some(a) =
+                                a.filter(|a| **a != base.ref_allele && !a.contains('*'))
+                            {
+                                if !out.contains(a) {
+                                    out.push(a.clone());
+                                }
+                            }
+                        }
+                        out
+                    });
+                Vf {
+                    sample: Some(s.clone()),
+                    sample_alts,
+                    ..base.clone()
+                }
             })
             .collect()
     })
@@ -1705,7 +1743,13 @@ pub fn annotate(
             i_feature.map_or("", |i| row[i]).to_owned(),
             row[i_allele].to_owned(),
         );
-        if groups.last().is_some_and(|(v, _)| matches(v)) && group_keys.insert(key.clone()) {
+        // a variant's rows share its Uploaded_variation and carry its sample's alleles
+        let continues = groups.last().is_some_and(|(v, rows)| {
+            matches(v)
+                && v.allows(row[i_allele])
+                && rows[0].split('\t').nth(i_up) == Some(row[i_up])
+        });
+        if continues && (i_feature.is_none() || group_keys.insert(key.clone())) {
             groups.last_mut().unwrap().1.push(l);
             n_rows += 1;
             continue;
@@ -1719,7 +1763,7 @@ pub fn annotate(
         }
         let vf = loop {
             match vfs.next()? {
-                Some(v) if matches(&v) => break v,
+                Some(v) if matches(&v) && (v.structural || v.allows(row[i_allele])) => break v,
                 Some(_) => continue,
                 // e.g. VEP renamed chromosome M to MT; the pipeline then lets VEP do it all
                 None => {

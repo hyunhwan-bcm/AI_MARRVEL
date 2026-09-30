@@ -1,7 +1,7 @@
 # VEP regulatory golden
 
 VEP 104.3 (native, `pixi -e vep`, `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0`) with
-`--everything --af_gnomad --individual all` on `input.vcf` (14 lines, two samples), using
+`--everything --af_gnomad --individual all` on `input.vcf` (17 lines, two samples), using
 `cache/`, a synthetic offline cache: `info.txt` and two chromosome 21 regulatory chunks
 (`*_reg.gz`, Perl Storable like the real cache). There is no real annotation data: the features,
 binding matrices and reference bases are made up to hit each rule of VEP's regulatory and motif

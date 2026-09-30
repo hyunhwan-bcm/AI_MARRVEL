@@ -16,7 +16,8 @@
 # and intergenic ones. The features are made up to hit each rule: overlapping regulatory
 # features sorted by stable ID, motifs sorted by dbID as strings (10 before 9), both strands,
 # informative and uninformative positions, SNVs, an MNV, an insertion, a deletion starting
-# before a motif (negative MOTIF_POS), deletions removing a whole feature (ablation), a motif
+# before a motif (negative MOTIF_POS), deletions removing a whole feature (ablation), a tandem
+# duplication covering one (amplification), two lines with one ID at one position, a motif
 # without a binding matrix (no row), one without transcription factors, and a motif stored in
 # the neighbouring chunk (found because a variant there loads that chunk too).
 use strict;
@@ -143,6 +144,11 @@ my @v = (
   [3002, 'snv_tfbs', 1, ['alt1'], '0/1', '0/0'],
   [1000000, 'boundary', 1, ['alt1'], '0/1', '0/0'],
   [1000505, 'spill', 1, ['alt1'], '0/1', '0/0'],
+  # a tandem duplication covering motif 12 (3001-3004): TFBS_amplification
+  [3000, 'tdup', 5, ['dup'], '0/1', '0/0'],
+  # a multi-allelic line split in two with the same ID (bcftools norm -m -both)
+  [1107, 'split', 1, ['alt1'], '0/1', '0/0'],
+  [1107, 'split', 1, ['alt2'], '0/1', '1/1'],
 );
 open my $vcf, '>', "$out/input.vcf" or die $!;
 print $vcf "##fileformat=VCFv4.2\n";
@@ -159,6 +165,7 @@ for my $x (@v) {
       : $k eq 'alt2' ? $other->($r, 1)
       : $k eq 'sub2' ? $other->(substr($r, 0, 1), 0) . $other->(substr($r, 1, 1), 2)
       : $k eq 'ins1' ? $r . 'G'
+      : $k eq 'dup' ? $r . substr($r, 1)
       : substr($r, 0, 1);
   }
   print $vcf join("\t", '21', $pos, $id, $r, join(',', @alts), 50, 'PASS', '.', 'GT', $g1, $g2), "\n";

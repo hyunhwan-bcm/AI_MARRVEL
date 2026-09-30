@@ -11,17 +11,26 @@
 //! (`OutputFactory.pm` *VariationAllele_to_output_hash, `MotifFeatureVariationAllele.pm`,
 //! `Funcgen/BindingMatrix.pm` and its `Converter.pm`).
 //!
-//! Not reproduced: the `_amplification` terms (they need a structural variant), and a motif
-//! without a cached sequence (VEP would read the FASTA; reported as unsupported).
+//! Not reproduced: a motif without a cached sequence (VEP would read the FASTA; reported as
+//! unsupported).
+//!
+//! A deliberate difference: 808 motifs of the 104 cache are stored only in a neighbouring
+//! chunk, up to ~15 kb outside it (with a regulatory feature of that chunk). VEP reports such a
+//! motif only when that chunk is loaded for the same fork child's slice of its input batch, so
+//! its output depends on `--buffer_size` and `--fork` (and so on the machine). Here a motif that
+//! overlaps the variant is always reported.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::collections::{HashMap, HashSet};
+use std::io;
+use std::path::Path;
+use std::sync::Arc;
 
-use chrysalis::shared_model::{PerlValue, ValueRef};
+use crate::perl_storable::{
+    array, field, inner, int_field, num, read_gz, text, text_field, PerlValue, ValueRef,
+};
 
-use crate::vep_annotate::{perl_num, source_chr_name, Synonyms, Vf};
+use crate::vep_annotate::{source_chr_name, Synonyms, Vf};
+use crate::vep_cache::{CacheDir, ChunkCache};
 
 fn unsupported(msg: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::Unsupported, msg.into())
@@ -119,8 +128,9 @@ impl Matrix {
             h -= x * log2(x);
         }
         let ic = 2.0 - h;
-        // summed over `values %{...}` in Perl: hash order, which can change the last bit
-        let bits: f64 = p.iter().map(|x| x * ic).sum();
+        // summed over `values %{...}`: Perl's hash order, which for these four keys is G, A, T, C
+        // with PERL_HASH_SEED=0 on Perl 5.32 (other builds could differ in the last bit)
+        let bits = ((p[2] * ic + p[0] * ic) + p[3] * ic) + p[1] * ic;
         bits > 1.5
     }
 }
@@ -145,80 +155,10 @@ struct Chunk {
     motif: Vec<MotifFeature>,
 }
 
-// ---------------------------------------------------------------------------------------------
-// Reading the Storable tree
-
-/// The value behind references and blessing.
-fn inner(v: &ValueRef) -> ValueRef {
-    let mut v = v.clone();
-    loop {
-        let next = match &*v.borrow() {
-            PerlValue::Ref(r) | PerlValue::Blessed(r, _) => r.clone(),
-            _ => break,
-        };
-        v = next;
-    }
-    v
-}
-
-fn field(h: &ValueRef, key: &str) -> Option<ValueRef> {
-    match &*inner(h).borrow() {
-        PerlValue::Hash(m) => m.get(key.as_bytes()).cloned(),
-        _ => None,
-    }
-}
-
-/// A scalar as Perl would print it (None for undef or a container).
-fn text(v: &ValueRef) -> Option<String> {
-    match &*inner(v).borrow() {
-        PerlValue::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        PerlValue::String(s) => Some(s.clone()),
-        PerlValue::Integer(i) => Some(i.to_string()),
-        PerlValue::UnsignedInteger(i) => Some(i.to_string()),
-        PerlValue::Double(d) => Some(d.to_string()),
-        _ => None,
-    }
-}
-
-fn num(v: &ValueRef) -> Option<f64> {
-    match &*inner(v).borrow() {
-        PerlValue::Integer(i) => Some(*i as f64),
-        PerlValue::UnsignedInteger(i) => Some(*i as f64),
-        PerlValue::Double(d) => Some(*d),
-        PerlValue::Bytes(b) => Some(perl_num(&String::from_utf8_lossy(b))),
-        PerlValue::String(s) => Some(perl_num(s)),
-        _ => None,
-    }
-}
-
-fn int_field(h: &ValueRef, key: &str) -> Option<i64> {
-    field(h, key).and_then(|v| num(&v)).map(|x| x as i64)
-}
-
-fn text_field(h: &ValueRef, key: &str) -> Option<String> {
-    field(h, key).and_then(|v| text(&v))
-}
-
-fn array(v: &ValueRef) -> Vec<ValueRef> {
-    match &*inner(v).borrow() {
-        PerlValue::Array(a) => a.clone(),
-        _ => Vec::new(),
-    }
-}
-
 /// Parses a `_reg.gz` chunk (gzip-compressed `nstore` output).
 fn parse_chunk(path: &Path) -> io::Result<Chunk> {
-    let mut bytes = Vec::new();
-    flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?).read_to_end(&mut bytes)?;
     let what = |e: String| bad(format!("{}: {e}", path.display()));
-    let (version, body) =
-        chrysalis::storable::header::parse(&bytes).map_err(|e| what(format!("{e:?}")))?;
-    let config = version.body_config();
-    let mut cursor = chrysalis::storable::body::Cursor::new(body);
-    let mut seen = chrysalis::shared_model::SeenTable::new();
-    let mut classes = chrysalis::shared_model::ClassTable::new();
-    let root = chrysalis::storable::body::read_value(&mut cursor, &mut seen, &mut classes, &config)
-        .map_err(|e| what(format!("{e:?}")))?;
+    let root = read_gz(path)?;
     let mut chunk = Chunk::default();
     // matrices shared between motifs with the same stable ID and frequencies
     let mut matrices: HashMap<String, Vec<Arc<Matrix>>> = HashMap::new();
@@ -315,78 +255,28 @@ fn parse_chunk(path: &Path) -> io::Result<Chunk> {
 const CHUNKS_KEPT: usize = 64;
 /// Chunks parsed at the same time, to bound that transient memory.
 const PARSES_AT_ONCE: usize = 2;
-/// A chunk can hold motifs up to ~4 kb outside its range (stored with a regulatory feature of
-/// that chunk). VEP sees them only when the chunk is loaded for some variant of the same batch;
-/// here the neighbouring chunk is read for variants this close to a chunk boundary.
-const SPILL: i64 = 10_000;
-
-/// A chunk: chromosome and index (`int((pos - 1) / cache_region_size)`).
-type ChunkKey = (String, i64);
-type ChunkCell = Arc<OnceLock<Result<Arc<Chunk>, String>>>;
-
-/// Parsed chunks, and the order they were last used in.
-#[derive(Default)]
-struct Cells {
-    by_key: HashMap<ChunkKey, ChunkCell>,
-    order: VecDeque<ChunkKey>,
-}
-
-/// Chunks shared by all handles: each is parsed once.
-#[derive(Default)]
-struct Shared {
-    cells: Mutex<Cells>,
-    parsing: (Mutex<usize>, Condvar),
-}
+/// How far outside its chunk a motif can be stored (at most 14,913 bp in the 104 cache): the
+/// neighbouring chunks are read for variants this close to a chunk boundary.
+const SPILL: i64 = 20_000;
 
 /// The cache's regulatory chunks.
 pub struct Regulatory {
     /// `regulatory 1` in `info.txt`; without it VEP writes no regulatory or motif rows.
     enabled: bool,
-    dir: Arc<PathBuf>,
-    region_size: i64,
-    valid: Arc<HashSet<String>>,
+    cache: Arc<CacheDir>,
     synonyms: Synonyms,
-    shared: Arc<Shared>,
+    chunks: Arc<ChunkCache<Chunk>>,
 }
 
 impl Regulatory {
     /// `dir` is the VEP cache directory with `info.txt` (e.g. `homo_sapiens/104_GRCh38`).
     pub fn open(dir: &Path, synonyms: Synonyms) -> io::Result<Regulatory> {
-        let info = std::fs::read_to_string(dir.join("info.txt"))
-            .map_err(|e| io::Error::new(e.kind(), format!("{}/info.txt: {e}", dir.display())))?;
-        let mut regulatory = false;
-        let mut region_size = 1_000_000;
-        for l in info.lines() {
-            match l.split_once('\t') {
-                Some(("regulatory", v)) => regulatory = v == "1",
-                Some(("cache_region_size", v)) => {
-                    region_size = v
-                        .parse()
-                        .map_err(|_| bad("info.txt: bad cache_region_size"))?
-                }
-                Some(("serialiser_type", v)) if v != "storable" => {
-                    return Err(unsupported(format!(
-                        "cache serialiser {v} is not supported"
-                    )))
-                }
-                _ => {}
-            }
-        }
-        let mut valid = HashSet::new();
-        for e in std::fs::read_dir(dir)? {
-            let e = e?;
-            let n = e.file_name().to_string_lossy().into_owned();
-            if !n.starts_with('.') && e.path().is_dir() {
-                valid.insert(n);
-            }
-        }
+        let cache = CacheDir::open(dir)?;
         Ok(Regulatory {
-            enabled: regulatory,
-            dir: Arc::new(dir.to_owned()),
-            region_size,
-            valid: Arc::new(valid),
+            enabled: cache.info.get("regulatory").is_some_and(|v| v == "1"),
+            cache: Arc::new(cache),
             synonyms,
-            shared: Arc::default(),
+            chunks: Arc::new(ChunkCache::new(CHUNKS_KEPT, PARSES_AT_ONCE)),
         })
     }
 
@@ -394,58 +284,21 @@ impl Regulatory {
     pub fn try_clone(&self) -> io::Result<Regulatory> {
         Ok(Regulatory {
             enabled: self.enabled,
-            dir: self.dir.clone(),
-            region_size: self.region_size,
-            valid: self.valid.clone(),
+            cache: self.cache.clone(),
             synonyms: self.synonyms.clone(),
-            shared: self.shared.clone(),
+            chunks: self.chunks.clone(),
         })
     }
 
     fn chunk(&self, chr: &str, idx: i64) -> io::Result<Arc<Chunk>> {
-        let key = (chr.to_owned(), idx);
-        let cell = {
-            let mut g = self.shared.cells.lock().unwrap_or_else(|e| e.into_inner());
-            let Cells {
-                by_key: cells,
-                order,
-            } = &mut *g;
-            if let Some(i) = order.iter().position(|k| *k == key) {
-                let k = order.remove(i).unwrap();
-                order.push_back(k);
+        self.chunks.get((chr.to_owned(), idx), || {
+            let p = self.cache.chunk_path(chr, idx, "_reg");
+            if p.exists() {
+                parse_chunk(&p)
             } else {
-                order.push_back(key.clone());
-                if order.len() > CHUNKS_KEPT {
-                    if let Some(old) = order.pop_front() {
-                        cells.remove(&old);
-                    }
-                }
+                Ok(Chunk::default())
             }
-            cells.entry(key).or_default().clone()
-        };
-        let parsed = cell.get_or_init(|| {
-            let (count, freed) = &self.shared.parsing;
-            let mut n = count.lock().unwrap_or_else(|e| e.into_inner());
-            while *n >= PARSES_AT_ONCE {
-                n = freed.wait(n).unwrap_or_else(|e| e.into_inner());
-            }
-            *n += 1;
-            drop(n);
-            let s = idx * self.region_size + 1;
-            let p = self
-                .dir
-                .join(chr)
-                .join(format!("{s}-{}_reg.gz", s + self.region_size - 1));
-            let r = if p.exists() {
-                parse_chunk(&p).map(Arc::new).map_err(|e| e.to_string())
-            } else {
-                Ok(Arc::new(Chunk::default()))
-            };
-            *count.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
-            freed.notify_one();
-            r
-        });
-        parsed.clone().map_err(bad)
+        })
     }
 
     /// The regulatory and motif rows of `vf`, whose alternate alleles are `alts` in VEP's order.
@@ -453,14 +306,14 @@ impl Regulatory {
         if !self.enabled {
             return Ok(Vec::new());
         }
-        let src = source_chr_name(&vf.chr, &self.valid, &self.synonyms).ok_or_else(|| {
+        let src = source_chr_name(&vf.chr, &self.cache.valid, &self.synonyms).ok_or_else(|| {
             unsupported(format!(
                 "VEP cache: chromosome {} has several synonyms",
                 vf.chr
             ))
         })?;
         let (lo, hi) = (vf.start.min(vf.end), vf.start.max(vf.end));
-        let size = self.region_size;
+        let size = self.cache.region_size;
         let (mut r_s, mut r_e) = ((lo - 1).div_euclid(size), (hi - 1).div_euclid(size));
         if lo - (r_s * size + 1) < SPILL && r_s > 0 {
             r_s -= 1;
@@ -556,7 +409,8 @@ pub struct MotifColumns {
 }
 
 /// The consequence terms of `allele` on a feature at `fs..fe` and the IMPACT: the ablation
-/// term for a deletion covering the whole feature, and the overlap term.
+/// term for a deletion covering the whole feature, the amplification term for a tandem
+/// duplication covering it, and the overlap term.
 fn consequences(vf: &Vf, allele: &str, fs: i64, fe: i64, motif: bool) -> (String, &'static str) {
     let ref_len = vf.end - vf.start + 1;
     let alt = if allele == "-" { "" } else { allele };
@@ -571,14 +425,34 @@ fn consequences(vf: &Vf, allele: &str, fs: i64, fe: i64, motif: bool) -> (String
         && (alt.is_empty() || alt.len() < r.len())
         && !r.is_empty()
         && r != "0";
-    match (motif, complete_overlap && deletion) {
-        (true, true) => ("TFBS_ablation,TF_binding_site_variant".into(), "MODERATE"),
-        (true, false) => ("TF_binding_site_variant".into(), "MODIFIER"),
-        (false, true) => (
-            "regulatory_region_ablation,regulatory_region_variant".into(),
-            "MODIFIER",
-        ),
-        (false, false) => ("regulatory_region_variant".into(), "MODIFIER"),
+    // pre-predicate `increase_length` and `copy_number_gain`, which for a sequence variant is
+    // `tandem_duplication`: the alternate is the reference repeated
+    let amplification = ref_len < alt.len() as i64
+        && !r.is_empty()
+        && r != "0"
+        && !alt.is_empty()
+        && alt != "0"
+        && alt.len() > r.len()
+        && alt.len() % r.len() == 0
+        && alt == r.repeat(alt.len() / r.len());
+    let (extra, impact) = match (
+        complete_overlap && deletion,
+        complete_overlap && amplification,
+    ) {
+        (true, _) if motif => (Some("TFBS_ablation"), "MODERATE"),
+        (true, _) => (Some("regulatory_region_ablation"), "MODIFIER"),
+        (false, true) if motif => (Some("TFBS_amplification"), "MODIFIER"),
+        (false, true) => (Some("regulatory_region_amplification"), "MODIFIER"),
+        (false, false) => (None, "MODIFIER"),
+    };
+    let base = if motif {
+        "TF_binding_site_variant"
+    } else {
+        "regulatory_region_variant"
+    };
+    match extra {
+        Some(t) => (format!("{t},{base}"), impact),
+        None => (base.to_owned(), impact),
     }
 }
 
@@ -655,7 +529,7 @@ fn score_delta(
     if allele_seq == "-" || ref_seq == "-" || allele_seq.len() != ref_seq.len() {
         return None;
     }
-    let (mut s, mut e) = (motif_start?, motif_end?);
+    let (mut s, e) = (motif_start?, motif_end?);
     let n = seq.len() as i64;
     if s < 1 {
         allele_seq = allele_seq.get((1 - s) as usize..)?.to_owned();
@@ -663,9 +537,7 @@ fn score_delta(
     }
     if e > n {
         allele_seq = allele_seq.get(..(n - s + 1).max(0) as usize)?.to_owned();
-        e = n;
     }
-    let _ = e;
     let var_len = allele_seq.len() as i64;
     if var_len > mf.end - mf.start + 1 {
         return None;

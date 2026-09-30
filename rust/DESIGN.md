@@ -106,12 +106,14 @@ Rust port are added next to the originals, never in place of them.
   regulatory features by stable ID, then motif features by dbID compared as strings, each with
   the variant's alleles in VEP's order. A deletion covering a whole motif is `TFBS_ablation`,
   IMPACT MODERATE, the one way these rows reach AIM's features (the IMPACT maximum, the LIT
-  filter, the tier's HIGH/MODERATE counts); AIM reads no MOTIF_* column. A chunk can hold motifs
-  up to ~4 kb outside its range; VEP sees them only when that chunk is loaded for some variant of
-  the same batch, so its output depends on batching there (like `HGNC_ID`). The port reads the
-  neighbouring chunk for variants within 10 kb of a boundary, which matches VEP whenever the
-  batch loaded it. Parsing a large chunk takes ~0.5 GB for a moment (the crate builds the whole
-  Perl tree); at most two parse at once, and each chunk is parsed once per run. Checked
+  filter, the tier's HIGH/MODERATE counts); AIM reads no MOTIF_* column. A tandem duplication
+  covering a feature gets the `_amplification` term. **Deliberate difference:** 808 motifs of the
+  104 cache are stored only in a neighbouring chunk, up to 14,913 bp outside it. VEP reports
+  such a motif only when that chunk is loaded for the same fork child's slice of its batch, so
+  its output depends on `--buffer_size` and `--fork`, and so on the machine (like `HGNC_ID`).
+  The port always reports a motif that overlaps the variant. Parsing a large chunk takes
+  ~0.5 GB for a moment (the crate builds the whole Perl tree); at most two parse at once, and a
+  chunk is parsed again only after 64 others were used. Checked
   byte-identical against seeded VEP, regulatory rows removed and regenerated together with the
   known-variant columns: 218,432 ClinVar rows, 136,667 cache-sampled rows, 156,053 multi-allelic
   rows, 23 per-chromosome tasks, duplicated and unnamed VCF lines, and a synthetic golden.

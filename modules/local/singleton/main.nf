@@ -491,7 +491,7 @@ process ANNOTATE_BY_VEP {
         --fork ${task.cpus} --everything --format vcf \\
         --cache --offline --tab --force_overwrite \\
         --species homo_sapiens --assembly ${ref_assembly} \\
-        --af_gnomad --individual all --input_file $vcf --buffer_size 50"""
+        --af_gnomad --individual all --input_file $vcf --buffer_size \$bs"""
     def vep_lookups = """--custom ${vep_custom_gnomad},gnomADg,vcf,exact,0,AF,AF_popmax,controls_nhomalt \\
         --custom ${vep_custom_clinvar},clinvar,vcf,exact,0,CLNREVSTAT,CLNSIG,CLNSIGCONF \\
         --custom ${vep_custom_hgmd},hgmd,vcf,exact,0,CLASS,GENE,PHEN,RANKSCORE \\
@@ -499,8 +499,16 @@ process ANNOTATE_BY_VEP {
         --plugin SpliceAI,snv=${vep_plugin_spliceai_snv},indel=${vep_plugin_spliceai_indel},cutoff=0.5 \\
         --plugin CADD,${vep_plugin_cadd},ALL \\
         --plugin dbNSFP,${vep_plugin_dbnsfp},ALL"""
+    // VEP's output order depends on Perl's hash order (issue #54); a fixed seed makes it reproducible.
+    // Batch size: the task's variant count, from 50 (VEP's usual) up to vep_buffer_size. A larger
+    // batch reloads VEP's cache far less, but VEP gives each fork at least ~50 variants of a batch,
+    // so a batch much larger than the task would leave forks idle. Output is identical for any size.
+    def vep_setup = """export PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0
+    n=\$(gzip -cdf $vcf | grep -vc '^#' || true)
+    bs=\$(( n < 50 ? 50 : (n > ${params.vep_buffer_size} ? ${params.vep_buffer_size} : n) ))"""
     if (params.rust && params.ref_ver == 'hg38')
     """
+    ${vep_setup}
     VEP=\${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep}
     \$VEP ${vep_common} --output_file ${vcf.baseName}-vep.base.txt
 
@@ -522,6 +530,7 @@ process ANNOTATE_BY_VEP {
     """
     else
     """
+    ${vep_setup}
     \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} \\
         --dir_cache ${vep_dir_cache} \\
         --dir_plugins ${vep_dir_plugins} \\
@@ -536,7 +545,7 @@ process ANNOTATE_BY_VEP {
         --plugin CADD,${vep_plugin_cadd},ALL \\
         --plugin dbNSFP,${vep_plugin_dbnsfp},ALL \\
         --individual all --output_file ${vcf.baseName}-vep.txt --input_file $vcf \\
-        --buffer_size 50
+        --buffer_size \$bs
     """
 }
 

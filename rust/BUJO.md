@@ -119,3 +119,12 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – end-to-end `--rust` ClinVar sample: 108/108 tasks, 2 min 49 s; outputs as before (merged `CADD_phred` ≤ 1 ulp, row order)
 - × Review of #55 (each finding checked against native VEP): lowercase alleles now upper-cased as VEP does; `chr_synonyms.txt` used for custom files (chrM); structural variants and other unsupported input exit with status 3 and the pipeline falls back to VEP's own lookups; `--threads ${task.cpus}`; htslib 1.22 VCF record spans (SVLEN, gVCF LEN, END cannot shorten); per-plugin caches
   - ! a new per-line INFO search doubled SpliceAI's time (29 → 68 s on 17.5k variants); fixed by scanning key starts only
+
+## 2026-09-30 (Wed)
+
+- × Why VEP is slow, from its Perl: `--fork` children of `buffer_size/(2N)` variants each reload every 1 Mb cache chunk (regulatory chunk ~110 ms); 5,883 loads for 1,798 distinct chunks on 17,533 variants; interval tree ~2%
+- × `vep_buffer_size` param (default 1000): identical output, 184 → 70 s on 17,533 variants (6 forks), 234 → 128 s (2 forks)
+  - ! a fixed 1000 slowed small tasks (one fork idle: ClinVar sample VEP 79 → 126 s) → batch = task's variant count, 50..1000
+- × VEP seeded (`PERL_HASH_SEED=0`, #54): reproducible output
+- × fastVEP 0.4.0 on the same input with Ensembl 104 GFF3: 3.6 s; same transcript rows; Consequence 99.906% / IMPACT 99.990% after mapping VEP 115 splice terms; no regulatory or motif rows
+- ! the VEP cache's FASTA `.fai` does not match its `.fa.gz` (63 G bases listed; chr17 lookups return header text) — to check with the gnomAD investigation

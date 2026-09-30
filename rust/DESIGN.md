@@ -53,7 +53,19 @@ Rust port are added next to the originals, never in place of them.
 
 ## Findings that affect "identical"
 
-- VEP 104.3 is not deterministic run to run. Two runs of the same command on the same input
+- ANNOTATE_BY_VEP runs VEP with `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0` (#54), so its output is
+  the same on every run; before, the order of a 1/2 sample's allele rows, of equal-rank consequence
+  terms and a few HGVS/position cells followed Perl's random hash order. The seed fixes one of the
+  orders VEP could produce; the models were trained on unseeded output, i.e. on a random mix.
+- VEP's time is mostly reloading its cache: with `--fork N` each batch of `--buffer_size`
+  variants is split into children of at most `buffer_size / (2N)` variants, and every child
+  deserialises each 1 Mb cache chunk it touches (a regulatory chunk: ~7,000 Perl objects, ~110 ms)
+  and then exits. ANNOTATE_BY_VEP now uses the task's variant count as the batch, from 50 up to
+  `vep_buffer_size` (default 1000), so each child covers more variants per load. Not a fixed 1000:
+  VEP gives each child at least ~50 variants, so on a 60-variant task a 1000 batch leaves one of
+  two forks idle (ClinVar sample: VEP task time 79 → 126 s). Output is byte-identical for any size
+  (checked seeded, forks 2 and 6).
+- VEP 104.3 is not deterministic run to run without a fixed seed. Two runs of the same command on the same input
   (8,233 multi-allelic lines, 156,053 rows) put 43,870 rows in a different order and differ in
   `CDS_position`, `Protein_position`, `HGVSp` and `Amino_acids` on a few dozen rows (Perl hash
   order: a sample's two alternates, consequence terms of equal rank). Single-allelic 0/1 and 1/1

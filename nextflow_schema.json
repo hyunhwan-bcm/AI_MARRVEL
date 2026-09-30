@@ -83,6 +83,12 @@
           "type": "boolean",
           "description": "Enable low impact. Addition will enable low impact transcripts."
         },
+        "vep_buffer_size": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 1,
+          "description": "Largest VEP batch (--buffer_size); each task uses its variant count, from 50 up to this. Output is identical for any size; larger batches reload VEP's cache less often (on 17,533 variants with 2 forks, 1000 is 45% faster than 50, for about 2 GB more memory)."
+        },
         "rust": {
           "type": "boolean",
           "description": "Run PHRANK_SCORING, HPO_SIM, ANNOTATE_BY_MODULES, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION with the Rust `aim` binary (see rust/README.md)."

@@ -21,7 +21,10 @@ cd rust && cargo test --release -- --include-ignored
 `--rust true` swaps PHRANK_SCORING, HPO_SIM, ANNOTATE_BY_MODULES, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION for
 the `aim` binary, and on hg38 moves ANNOTATE_BY_VEP's `--custom` and plugin lookups (gnomAD,
 ClinVar, HGMD, REVEL, SpliceAI, CADD, dbNSFP) from VEP to `aim vep-annotate`; VEP still computes
-the rows and consequences (default off; the other steps are unchanged):
+the rows and consequences (default off; the other steps are unchanged). With `--rust_vep true`
+as well, ANNOTATE_BY_VEP runs `aim vep` instead of VEP: rows, consequences, HGVS, known
+variants and regulatory rows from the VEP cache alone (VEP's SIFT, PolyPhen and DOMAINS columns,
+which AIM does not read, stay empty; input it does not support falls back to VEP):
 
 ```bash
 cargo build --release                    # rust/target/release/aim

@@ -163,6 +163,27 @@ Rust port are added next to the originals, never in place of them.
   multi-allelic rows; a Y PAR set). ClinVar 17.5k: 5.4 s / 531 MB (a 64 kb FASTA window per
   variant). Not yet: SIFT, PolyPhen, DOMAINS (VEP's columns; AIM reads dbNSFP's scores).
 
+- VEP without VEP (`aim vep --vcf <vcf> --cache <dir_cache>/homo_sapiens/104_GRCh38`, step 4c
+  of #57): `vep_skeleton.rs` writes the rows VEP would (per sample with a non-reference
+  genotype, a row per transcript within 5 kb and allele, else an intergenic row per allele,
+  with Uploaded_variation, Location, Allele, IND, ZYG and VARIANT_CLASS, and VEP 104.3's header)
+  and streams them into `annotate` with every lookup on: transcript columns and HGVS, known
+  variants, regulatory and motif rows, then `--custom` and `--plugin` as before (the plugins see
+  the recomputed Consequence, Amino_acids and SYMBOL). A sample with two alternate alleles gets
+  them in `keys %non_ref` order, so `perl_hash.rs` ports seeded Perl 5.32's hash (SBOX32 up to
+  24 bytes, STADTX above; checked on 3,000 random keys) and its key order (buckets from the
+  last, newest first); an unseeded VEP, as in AIM's Docker image, orders them at random.
+  Checked whole files against seeded VEP 104 (every header line but the timestamp, the rows
+  and their order, every cell but SIFT, PolyPhen and DOMAINS, which are not ported and which
+  AIM does not read): ClinVar 17.5k, cache-sampled, `chr` names, multi-allelic, the chr17
+  battery, intron-spanning indels, MT, the review sets of #60 and #61 (1.66 M multi-allelic
+  rows, Y PAR) and 23 per-chromosome tasks of a real exome, all identical but DGCR5's HGNC_ID.
+  Time and memory are dominated by parsing regulatory chunks (ClinVar 17.5k: 95 s / 2.4 GB on
+  8 threads, VEP ~180 s; a chromosome task 1-6 s / 0.5-1.8 GB). The pipeline uses it with
+  `--rust true --rust_vep true` on hg38 (opt-in; exit status 3, e.g. structural variants,
+  falls back to VEP); on the ClinVar sample every pipeline output matches the VEP-based run
+  as row sets, but for 1-ulp noise in one imputed column that two VEP-based runs show too.
+
 - The published hg38 gnomAD genome index (`vep/hg38/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz.tbi`)
   does not match its data file (every lookup fails with "Invalid BGZF header"; a freshly built
   index works), and that file names the field `nhomalt` while AIM requests `controls_nhomalt`.

@@ -249,7 +249,7 @@ impl Vf {
     }
 
     /// The `Location` column.
-    fn location(&self) -> String {
+    pub fn location(&self) -> String {
         let c = if self.start > self.end {
             format!("{}-{}", self.end, self.start)
         } else if self.start == self.end {
@@ -263,7 +263,7 @@ impl Vf {
 
 /// The variants VEP builds from one VCF line, one per sample with `--individual all`. Samples
 /// whose genotype gives no variant simply have no output rows, so they need not be dropped here.
-fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
+pub(crate) fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() < 8 {
         return Err(err(format!("VCF line with fewer than 8 columns: {line}")));
@@ -1485,6 +1485,14 @@ const FIELD_DESCRIPTIONS: &[(&str, &str)] = &[
     ("miRNA", "SO terms of overlapped miRNA secondary structure feature(s)"),
 ];
 
+/// VEP's header description of a column, if it has one.
+pub fn field_description(name: &str) -> Option<&'static str> {
+    FIELD_DESCRIPTIONS
+        .iter()
+        .find(|(k, _)| *k == name)
+        .map(|(_, d)| *d)
+}
+
 /// The lookups to add, in VEP's command-line order.
 pub struct Lookups {
     customs: Vec<Custom>,
@@ -1573,6 +1581,11 @@ impl Lookups {
         let synonyms = self.cache_synonyms(cache)?;
         self.transcripts = Some(crate::vep_transcripts::Transcripts::open(cache, synonyms)?);
         Ok(self)
+    }
+
+    /// The transcripts lookup, if opened.
+    pub fn transcripts(&self) -> Option<&crate::vep_transcripts::Transcripts> {
+        self.transcripts.as_ref()
     }
 
     /// The same lookups with their own file handles (indexes are shared).
@@ -2108,14 +2121,6 @@ fn annotate_variant(
     }
     for l in rows {
         let row: Vec<&str> = l.split('\t').collect();
-        let view = RowView {
-            vf,
-            allele: row[layout.allele],
-            feature_type: row[layout.feature_type],
-            consequences: row[layout.consequence].split(',').collect(),
-            pep_allele_string: dash(row[layout.amino_acids]),
-            symbol: dash(row[layout.symbol]),
-        };
         extra.clear();
         if lookups.transcripts.is_some() && row[layout.feature_type] == "Transcript" {
             let feature = layout.reg.feature.map_or("", |i| row[i]);
@@ -2130,6 +2135,27 @@ fn annotate_variant(
                 }
             }
         }
+        // the plugins see the row's recomputed columns
+        let recomputed = |k: &str, i: usize| -> String {
+            match extra.get(k) {
+                Some(Some(v)) => v.clone(),
+                Some(None) => "-".to_owned(),
+                None => row[i].to_owned(),
+            }
+        };
+        let (csq, aa, sym) = (
+            recomputed("Consequence", layout.consequence),
+            recomputed("Amino_acids", layout.amino_acids),
+            recomputed("SYMBOL", layout.symbol),
+        );
+        let view = RowView {
+            vf,
+            allele: row[layout.allele],
+            feature_type: row[layout.feature_type],
+            consequences: csq.split(',').collect(),
+            pep_allele_string: dash(&aa),
+            symbol: dash(&sym),
+        };
         if let Some(c) = &colocated {
             extra.extend(c.row(view.allele));
         }

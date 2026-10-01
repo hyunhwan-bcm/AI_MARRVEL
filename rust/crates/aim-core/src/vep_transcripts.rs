@@ -1,10 +1,12 @@
 //! Transcripts from VEP 104's offline cache (`<chr>/<start>-<end>.gz`, Perl Storable), as
-//! fastVEP transcripts, and fastVEP's consequence prediction on them (turned into VEP 104's
-//! terms by [`crate::vep_consequence`] and into row columns by [`crate::vep_rows`]).
+//! fastVEP transcripts plus VEP's own fields. VEP 104's terms come from
+//! [`crate::vep_consequence`] (fastVEP's prediction supplies only the upstream, downstream and
+//! NMD terms), the row columns from [`crate::vep_rows`].
 //!
 //! The cache holds what VEP itself annotates with: the transcript set, gene symbols and
-//! cross-references as VEP prints them, and the translateable sequence and peptide with
-//! Ensembl's sequence edits applied. So no GFF3 or FASTA is needed.
+//! cross-references as VEP prints them, the translateable sequence and peptide (with the
+//! translation's sequence edits applied), the 3' UTR, the codon table and the sequence edits
+//! VEP applies to reference peptides. So no GFF3 or FASTA is needed.
 //!
 //! Which transcripts a variant gets follows `AnnotationType/Transcript.pm`: those within 5 kb
 //! (`UPSTREAM_DISTANCE` / `DOWNSTREAM_DISTANCE`) of the variant, from the chunks covering the
@@ -51,6 +53,10 @@ pub struct CachedTranscript {
     pub swissprot: Option<String>,
     pub trembl: Option<String>,
     pub uniparc: Option<String>,
+    /// The codon table (`_codon_table`: 2 on MT) and the translation's sequence edits (peptide
+    /// start, end, replacement), which VEP applies to the reference peptide.
+    pub codon_table: u32,
+    pub seq_edits: Vec<(i64, i64, String)>,
 }
 
 fn strand(i: i64) -> Strand {
@@ -169,11 +175,6 @@ fn transcript(t: &ValueRef, chr: &str) -> CachedTranscript {
     let (crs, cre) = translation.as_ref().map_or((None, None), |tl| {
         (Some(tl.genomic_start), Some(tl.genomic_end))
     });
-    let list = |k: &str| {
-        opt(t, k)
-            .map(|s| s.split(',').map(str::to_owned).collect())
-            .unwrap_or_default()
-    };
     let tr = Transcript {
         stable_id: opt(t, "stable_id").unwrap_or_default().into(),
         version: int_field(t, "version").map(|v| v as u32),
@@ -193,44 +194,23 @@ fn transcript(t: &ValueRef, chr: &str) -> CachedTranscript {
         translateable_seq: translateable,
         peptide,
         canonical: int_field(t, "is_canonical").unwrap_or(0) == 1,
-        mane_select: attrs.get("MANE_Select").cloned(),
-        mane_plus_clinical: attrs.get("MANE_Plus_Clinical").cloned(),
-        tsl: attrs.get("TSL").and_then(|v| {
-            v.trim_start_matches("tsl")
-                .split_whitespace()
-                .next()
-                .and_then(|x| x.parse().ok())
-        }),
-        appris: attrs.get("appris").cloned(),
-        ccds: opt(t, "_ccds"),
-        protein_id: opt(t, "_protein"),
+        // the row's attribute and cross-reference columns come from `CachedTranscript`
+        mane_select: None,
+        mane_plus_clinical: None,
+        tsl: None,
+        appris: None,
+        ccds: None,
+        protein_id: None,
         protein_version: None,
-        swissprot: list("_swissprot"),
-        trembl: list("_trembl"),
-        uniparc: list("_uniparc"),
-        refseq_id: opt(t, "_refseq"),
-        source: opt(t, "source"),
-        gencode_primary: attrs.contains_key("gencode_primary"),
+        swissprot: Vec::new(),
+        trembl: Vec::new(),
+        uniparc: Vec::new(),
+        refseq_id: None,
+        source: None,
+        gencode_primary: false,
         flags,
         codon_table_start_phase: start_phase,
     };
-    // `_rna_edit` attributes: "start end alt_seq" in cDNA coordinates
-    let edits = array_field(t, "attributes")
-        .iter()
-        .filter(|a| opt(a, "code").as_deref() == Some("_rna_edit"))
-        .filter_map(|a| {
-            let v = text_field(a, "value")?;
-            let mut it = v.split_whitespace();
-            let start = it.next()?.parse().ok()?;
-            let end = it.next()?.parse().ok()?;
-            let alt_len = it.next().map_or(0, |x| x.len() as i64);
-            Some(crate::vep_mapper::RnaEdit {
-                start,
-                end,
-                alt_len,
-            })
-        })
-        .collect();
     let exon_list: Vec<(i64, i64, i64, i64)> = tr
         .exons
         .iter()
@@ -251,7 +231,6 @@ fn transcript(t: &ValueRef, chr: &str) -> CachedTranscript {
         &exon_list,
         tr.cdna_coding_start.map(|x| x as i64),
         tr.cdna_coding_end.map(|x| x as i64),
-        edits,
     );
     let attributes = array_field(t, "attributes")
         .iter()
@@ -262,8 +241,26 @@ fn transcript(t: &ValueRef, chr: &str) -> CachedTranscript {
             )
         })
         .collect();
+    let codon_table = cached("codon_table")
+        .and_then(|v| text(&v))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let seq_edits = cached("seq_edits")
+        .map(|v| crate::perl_storable::array(&v))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| {
+            Some((
+                int_field(e, "start")?,
+                int_field(e, "end")?,
+                text_field(e, "alt_seq").unwrap_or_default(),
+            ))
+        })
+        .collect();
     CachedTranscript {
         db_id: int_field(t, "dbID").unwrap_or(0),
+        codon_table,
+        seq_edits,
         tr,
         utr5: utr5_seq,
         utr3: utr3_seq,

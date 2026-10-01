@@ -193,8 +193,8 @@ enum Command {
         #[arg(long)]
         regulatory: Option<PathBuf>,
         /// the VEP cache for the assembly: recompute the transcript rows' columns (Consequence,
-        /// IMPACT, positions, alleles, gene and transcript fields) with fastVEP on its
-        /// transcripts and VEP 104's rules; for checking against VEP, not yet for the pipeline
+        /// IMPACT, positions, alleles, gene and transcript fields) from its transcripts with
+        /// VEP 104's rules; for checking against VEP, not yet for the pipeline
         #[arg(long, hide = true)]
         transcripts: Option<PathBuf>,
         /// worker threads (0: one per core); each opens its own handles on the lookup files

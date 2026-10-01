@@ -147,5 +147,8 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - ! VEP's coordinates follow Ensembl's mapper (insertions at exon/CDS edges map to one flank, so `coding` can be false); ported `TranscriptMapper`
   - ! VEP evaluates consequences before its HGVS 3' shift, which later rewrites the shared transcript-level coordinates (multi-allelic lines print shifted CDS positions)
   - – Consequence + IMPACT + 27 transcript columns identical on 545,158 rows and 23 chromosome tasks
+  - ! Review of #60 (fuzzing ~660k rows): fastVEP's codons are not VEP's: no reference seq edits (HCK/WT1 start codons: start_lost vs synonymous), no codon across an intron (indels spanning one lose stop_lost/frameshift), no IUPAC complement; and VEP 104 calls splice_region per differing region and stretches exons near frameshift introns
+  - × Ported `codon`/`peptide`/`_get_alternate_cds`/`display_codon` (BioPerl translation, seq edits, codon tables) and `_intron_effects`; fastVEP now gives only up/downstream and NMD terms
+  - – all 29 columns identical on 1.28 M rows (review sets included) and 23 chromosome tasks, but the two known differences; ClinVar 17.5k in 5.3 s / 454 MB
 - • C step 4b: HGVSc/HGVSp (VEP's genomic 3' shift, cache FASTA), SIFT/PolyPhen, DOMAINS, miRNA
 - • C step 4c: whole rows from the VCF (`aim vep`): variant columns, intergenic rows, header

@@ -1,6 +1,6 @@
 //! The columns of VEP 104's transcript rows (`OutputFactory.pm`
 //! `BaseTranscriptVariationAllele_to_output_hash` / `TranscriptVariationAllele_to_output_hash`)
-//! from a cached transcript, fastVEP's prediction and VEP 104's coordinates.
+//! from a cached transcript and VEP 104's coordinates, codons and peptides.
 
 use crate::vep_consequence::Coding;
 use crate::vep_transcripts::CachedTranscript;
@@ -48,9 +48,6 @@ pub struct TranscriptAllele<'a> {
     pub coding: &'a Coding<'a>,
     pub terms: &'a [&'static str],
     pub impact: &'static str,
-    /// fastVEP's display codons (`ref/alt`, changed bases upper case) and peptide alleles.
-    pub codons: Option<(String, String)>,
-    pub amino_acids: Option<(String, String)>,
     /// The HGNC ID as VEP propagates it by symbol.
     pub hgnc_id: Option<String>,
 }
@@ -88,12 +85,8 @@ impl TranscriptAllele<'_> {
         if within_feature && c.in_exon {
             cdna = format_coords(c.cdna.0, c.cdna.1);
             if c.coding {
-                aa = self.pep_allele_string();
-                codons = self
-                    .codons
-                    .as_ref()
-                    .filter(|(r, a)| !r.is_empty() && !a.is_empty())
-                    .map(|(r, a)| format!("{r}/{a}"));
+                aa = c.amino_acids.clone();
+                codons = c.display_codons.clone();
                 cds = format_coords(c.cds.0, c.cds.1);
                 prot = format_coords(c.translation.0, c.translation.1);
             }
@@ -213,28 +206,6 @@ impl TranscriptAllele<'_> {
             },
         ));
         out
-    }
-
-    /// `pep_allele_string`: `ref/alt`, or one peptide when they are the same.
-    fn pep_allele_string(&self) -> Option<String> {
-        let unambiguous = self
-            .coding
-            .allele
-            .bytes()
-            .all(|b| matches!(b.to_ascii_uppercase(), b'A' | b'C' | b'G' | b'T' | b'-'));
-        if !unambiguous {
-            return None;
-        }
-        let (r, a) = self.amino_acids.as_ref()?;
-        let truthy = |s: &str| !s.is_empty() && s != "0";
-        if !truthy(a) || !truthy(r) {
-            return None;
-        }
-        Some(if r != a {
-            format!("{r}/{a}")
-        } else {
-            a.clone()
-        })
     }
 }
 

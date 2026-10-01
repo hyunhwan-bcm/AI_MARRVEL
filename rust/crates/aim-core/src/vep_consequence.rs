@@ -1,11 +1,9 @@
-//! VEP 104's consequence terms for fastVEP's predictions. fastVEP follows VEP 105+ (new splice
-//! terms, changed stop/start rules) and differs from VEP 104 in a few more cases, so:
-//! - its VEP 115 splice terms are mapped back;
-//! - the coding terms, the UTR and non-coding-transcript terms, `transcript_ablation` and the
-//!   tier rules are recomputed with VEP 104's own predicates (`Utils/VariationEffect.pm`,
-//!   `BaseVariationFeatureOverlapAllele.pm`), on fastVEP's codons and peptide alleles (which
-//!   are VEP's) and on VEP's coordinates ([`crate::vep_mapper`]);
-//! - fastVEP's other terms (splice, intron, up/downstream, NMD, ...) are kept.
+//! VEP 104's consequence terms for a transcript allele. fastVEP follows VEP 105+ (new splice
+//! terms, changed stop/start rules, another codon and peptide window), so only its upstream,
+//! downstream and NMD terms are kept; the rest is VEP 104's own predicates
+//! (`Utils/VariationEffect.pm`, `BaseTranscriptVariationAllele.pm` `_intron_effects`,
+//! `BaseVariationFeatureOverlapAllele.pm` `_bvfo_preds`), on VEP's coordinates
+//! ([`crate::vep_mapper`]) and VEP's codons and peptides ([`crate::vep_codon`]).
 
 use fastvep_core::Consequence;
 
@@ -57,58 +55,9 @@ pub fn term(name: &str) -> Option<(u32, &'static str)> {
         .map(|(_, r, i)| (*r, *i))
 }
 
-/// VEP 104's terms for fastVEP's, sorted by rank (Perl's stable sort, so equal ranks keep their
-/// order), and the IMPACT of the first.
-pub fn vep104(terms: &[Consequence]) -> (Vec<&'static str>, &'static str) {
-    let names: Vec<&'static str> = terms.iter().map(|c| c.so_term()).collect();
-    // the splice region terms of VEP 105+: VEP 104 reports splice_region_variant there, and
-    // nothing next to a splice donor or acceptor site (VariationEffect.pm splice_region)
-    let site = names
-        .iter()
-        .any(|t| *t == "splice_donor_variant" || *t == "splice_acceptor_variant");
-    let mut out: Vec<&'static str> = Vec::new();
-    for t in names {
-        let t = match t {
-            "splice_polypyrimidine_tract_variant" => continue,
-            "splice_donor_region_variant" | "splice_donor_5th_base_variant" if site => continue,
-            "splice_donor_region_variant" | "splice_donor_5th_base_variant" => {
-                "splice_region_variant"
-            }
-            t => t,
-        };
-        if !out.contains(&t) {
-            out.push(t);
-        }
-    }
-    out.sort_by_key(|t| term(t).map_or(u32::MAX, |(r, _)| r));
-    let impact = out
-        .first()
-        .and_then(|t| term(t))
-        .map_or("MODIFIER", |(_, i)| i);
-    (out, impact)
-}
-
 // ---------------------------------------------------------------------------------------------
-// VEP 104's coding predicates (`Utils/VariationEffect.pm`), on fastVEP's codons, peptides and
-// coordinates. fastVEP's codons and peptide alleles are VEP's; the terms it derives from them
-// follow VEP 105+, so they are recomputed here.
-
-/// The coding terms, recomputed by [`coding_terms`].
-const CODING_TERMS: &[&str] = &[
-    "stop_gained",
-    "frameshift_variant",
-    "stop_lost",
-    "start_lost",
-    "inframe_insertion",
-    "inframe_deletion",
-    "missense_variant",
-    "protein_altering_variant",
-    "incomplete_terminal_codon_variant",
-    "start_retained_variant",
-    "stop_retained_variant",
-    "synonymous_variant",
-    "coding_sequence_variant",
-];
+// VEP 104's transcript predicates (`Utils/VariationEffect.pm`), on VEP's coordinates, codons and
+// peptides.
 
 /// What the coding predicates read for one allele on one transcript.
 pub struct Coding<'a> {
@@ -125,16 +74,144 @@ pub struct Coding<'a> {
     pub cdna: (Option<i64>, Option<i64>),
     pub cds: (Option<i64>, Option<i64>),
     pub translation: (Option<i64>, Option<i64>),
-    /// The reference and alternate codons (upper case; `-` for none) and peptides.
-    pub codons: Option<(String, String)>,
-    pub peptides: Option<(String, String)>,
-    /// VEP's `coding` pre-predicate (`_bvfo_preds`) and `within_cds`.
+    /// VEP's codons and peptides of the reference and this allele (`codon`, `peptide`: `-`
+    /// for none), and the Codons and Amino_acids columns (`display_codon_allele_string`,
+    /// `pep_allele_string`).
+    pub ref_codon: Option<String>,
+    pub alt_codon: Option<String>,
+    pub ref_pep: Option<String>,
+    pub alt_pep: Option<String>,
+    pub display_codons: Option<String>,
+    pub amino_acids: Option<String>,
+    /// VEP's `coding` pre-predicate (`_bvfo_preds`: a lone Gap in CDS coordinates counts) and
+    /// `within_cds`.
     pub coding: bool,
     pub within_cds: bool,
-    /// `within_cdna`, and the `exon` and `utr` pre-predicates.
+    /// `within_cdna`, and the `exon` (stretched by 12 bp on a transcript with a frameshift
+    /// intron) and `utr` pre-predicates.
     pub within_cdna: bool,
     pub in_exon: bool,
     pub utr: bool,
+    /// The `intron` and `intron_boundary` pre-predicates and `_intron_effects`.
+    pub intron: bool,
+    pub intron_boundary: bool,
+    pub ie: IntronEffects,
+    pub codon_table: u32,
+}
+
+/// VEP 104's `_intron_effects` for one allele.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IntronEffects {
+    pub intronic: bool,
+    pub start_splice_site: bool,
+    pub end_splice_site: bool,
+    pub splice_region: bool,
+    pub within_frameshift_intron: bool,
+}
+
+/// A transcript's introns in transcript order (`_introns`: from its exons), with VEP's
+/// frameshift flag (`abs(end - start) <= 12`); an empty one (abutting exons) is skipped.
+fn introns(tr: &fastvep_genome::Transcript) -> Vec<(i64, i64, bool)> {
+    let forward = matches!(tr.strand, fastvep_core::Strand::Forward);
+    tr.exons
+        .windows(2)
+        .map(|w| {
+            let (a, b) = (&w[0], &w[1]);
+            if forward {
+                (a.end as i64 + 1, b.start as i64 - 1)
+            } else {
+                (b.end as i64 + 1, a.start as i64 - 1)
+            }
+        })
+        .filter(|(s, e)| s <= e)
+        .map(|(s, e)| (s, e, (e - s).abs() <= 12))
+        .collect()
+}
+
+/// `_get_differing_regions`: where the allele differs from the reference (both longer than one
+/// base: the runs of differing positions; else the whole reference), as offsets from the start.
+fn differing_regions(ref_allele: &str, allele: &str, ref_length: i64) -> Vec<(i64, i64)> {
+    let dash = |a: &str| if a == "-" { "" } else { a }.as_bytes().to_vec();
+    let (r, a) = (dash(ref_allele), dash(allele));
+    if !(a.len() > 1 && ref_length > 1) {
+        return vec![(0, ref_length - 1)];
+    }
+    // Perl's string xor: the longer string's extra bases differ
+    let mut out: Vec<(i64, i64)> = Vec::new();
+    for i in 0..r.len().max(a.len()) {
+        if r.get(i) == a.get(i) {
+            continue;
+        }
+        let i = i as i64;
+        match out.last_mut() {
+            Some(last) if last.1 == i - 1 => last.1 = i,
+            _ => out.push((i, i)),
+        }
+    }
+    out
+}
+
+/// `_intron_overlap`: the splice region (3-8 bp into the intron, 1-3 bp into the exon).
+fn intron_overlap(s: i64, e: i64, is: i64, ie: i64, insertion: bool) -> bool {
+    overlap(s, e, is + 2, is + 7)
+        || overlap(s, e, ie - 7, ie - 2)
+        || overlap(s, e, is - 3, is - 1)
+        || overlap(s, e, ie + 1, ie + 3)
+        || (insertion && (s == is || e == ie || s == is + 2 || e == ie - 2))
+}
+
+/// The `intron` and `intron_boundary` pre-predicates and `_intron_effects` of an allele. The
+/// introns are those of the whole variant (VEP caches them on first use); VEP visits them in
+/// its interval tree's order, which only matters for splice_region next to an exon of under
+/// ~20 bp, where this takes transcript order.
+fn intron_effects(
+    all: &[(i64, i64, bool)],
+    vf_start: i64,
+    vf_end: i64,
+    ref_allele: &str,
+    allele: &str,
+) -> (bool, bool, IntronEffects) {
+    let (min_vf, max_vf) = (vf_start.min(vf_end), vf_start.max(vf_end));
+    let within: Vec<_> = all
+        .iter()
+        .filter(|(s, e, _)| overlap(min_vf, max_vf, s - 3, e + 3))
+        .collect();
+    let boundary: Vec<_> = all
+        .iter()
+        .filter(|(s, e, _)| {
+            overlap(min_vf, max_vf, s - 3, s + 7) || overlap(min_vf, max_vf, e - 7, e + 3)
+        })
+        .collect();
+    let mut ie = IntronEffects::default();
+    for (rs, re) in differing_regions(ref_allele, allele, vf_end - vf_start + 1) {
+        let (rs, re) = (vf_start + rs, vf_start + re);
+        let insertion = rs == re + 1;
+        for &&(is, ien, fs) in &within {
+            if fs && overlap(rs, re, is, ien) {
+                ie.within_frameshift_intron = true;
+                continue;
+            }
+            if overlap(rs, re, is + 2, ien - 2) || (insertion && (rs == is + 2 || re == ien - 2)) {
+                ie.intronic = true;
+            }
+        }
+        for &&(is, ien, fs) in &boundary {
+            if fs && overlap(rs, re, is, ien) {
+                ie.within_frameshift_intron = true;
+                continue;
+            }
+            if overlap(rs, re, is, is + 1) {
+                ie.start_splice_site = true;
+            }
+            if overlap(rs, re, ien - 1, ien) {
+                ie.end_splice_site = true;
+            }
+            if !(ie.start_splice_site || ie.end_splice_site) {
+                ie.splice_region = intron_overlap(rs, re, is, ien, insertion);
+            }
+        }
+    }
+    (!within.is_empty(), !boundary.is_empty(), ie)
 }
 
 impl<'a> Coding<'a> {
@@ -146,8 +223,6 @@ impl<'a> Coding<'a> {
         vf_end: i64,
         ref_allele: &'a str,
         allele: &'a str,
-        codons: Option<(String, String)>,
-        peptides: Option<(String, String)>,
     ) -> Coding<'a> {
         use crate::vep_mapper::{ends, Seg};
         let tr = &ct.tr;
@@ -171,29 +246,88 @@ impl<'a> Coding<'a> {
         // the location pre-predicates (`_bvfo_preds`) are only set within the transcript, on the
         // variant's own start and end (so an insertion just past its end is outside)
         let within_feature = overlap(vf_start, vf_end, tr.start as i64, tr.end as i64);
+        let tr_introns = introns(tr);
+        let (intron, intron_boundary, ie) = if within_feature {
+            intron_effects(&tr_introns, vf_start, vf_end, ref_allele, allele)
+        } else {
+            (false, false, IntronEffects::default())
+        };
+        // a frameshift intron anywhere in the transcript stretches every exon by 12 bp
+        let stretch = if tr_introns.iter().any(|i| i.2) {
+            12
+        } else {
+            0
+        };
         let in_exon = within_feature
-            && tr
-                .exons
-                .iter()
-                .any(|e| overlap(min_vf, max_vf, e.start as i64, e.end as i64));
+            && tr.exons.iter().any(|e| {
+                overlap(
+                    min_vf,
+                    max_vf,
+                    e.start as i64 - stretch,
+                    e.end as i64 + stretch,
+                )
+            });
         let coding = within_feature
             && coding_region.is_some_and(|(a, b)| overlap(min_vf, max_vf, a, b))
             && in_exon
-            && match cds_coords.as_slice() {
-                [] => false,
-                [one] => matches!(one, Seg::Coord { .. }),
-                _ => true,
-            };
+            && !cds_coords.is_empty();
         let tl = tr.translateable_seq.as_deref().map_or(0, str::len) as i64;
         let within_cds = cds_coords
             .iter()
-            .any(|c| matches!(*c, Seg::Coord { start, end, .. } if end > 0 && start <= tl));
-        // `$feat->length`: the transcript's genomic span
-        let tr_len = tr.end as i64 - tr.start as i64 + 1;
-        let within_cdna = m
-            .genomic2cdna(vf_start, vf_end, strand)
+            .any(|c| matches!(*c, Seg::Coord { start, end, .. } if end > 0 && start <= tl))
+            || (tr.translation.is_some()
+                && ie.within_frameshift_intron
+                && coding_region.is_some_and(|(a, b)| overlap(vf_start, vf_end, a, b)));
+        // `$feat->length`: the cDNA length (the exons' lengths summed)
+        let cdna_len: i64 = tr
+            .exons
             .iter()
-            .any(|c| matches!(*c, Seg::Coord { start, end, .. } if end > 0 && start <= tr_len));
+            .map(|e| e.end as i64 - e.start as i64 + 1)
+            .sum();
+        let within_cdna =
+            m.genomic2cdna(vf_start, vf_end, strand).iter().any(
+                |c| matches!(*c, Seg::Coord { start, end, .. } if end > 0 && start <= cdna_len),
+            ) || (ie.within_frameshift_intron && within_feature);
+        // VEP's codons and peptides (no 3' shift for consequences)
+        let seqs = crate::vep_codon::Cds::new(ct);
+        let allele_of = |vfs: &str, is_reference: bool| crate::vep_codon::Allele {
+            vfs: vfs.to_owned(),
+            shift: 0,
+            is_reference,
+        };
+        let (alt, reference) = (allele_of(allele, false), allele_of(ref_allele, true));
+        let tl_coords = match translation {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        };
+        let codon = |a: &crate::vep_codon::Allele| {
+            tl_coords.and_then(|t| seqs.codon(vf_start, vf_end, a, t))
+        };
+        let pep = |a: &crate::vep_codon::Allele| {
+            tl_coords.and_then(|t| seqs.peptide(vf_start, vf_end, a, t))
+        };
+        let (ref_codon, alt_codon) = (codon(&reference), codon(&alt));
+        let (ref_pep, alt_pep) = (pep(&reference), pep(&alt));
+        // `codon_position`, from the cDNA start
+        let codon_position = cdna
+            .0
+            .zip(tr.cdna_coding_start)
+            .map(|(c, s)| (c - s as i64 + phase).rem_euclid(3) + 1);
+        let display = |a: &crate::vep_codon::Allele| {
+            tl_coords
+                .and_then(|t| seqs.display_codon(vf_start, vf_end, a, t, codon_position))
+                .filter(|d| truthy(d))
+        };
+        let display_codons =
+            display(&alt).and_then(|a| display(&reference).map(|r| format!("{r}/{a}")));
+        let amino_acids = match (&ref_pep, &alt_pep) {
+            (Some(r), Some(a)) if truthy(r) && truthy(a) => Some(if r != a {
+                format!("{r}/{a}")
+            } else {
+                a.clone()
+            }),
+            _ => None,
+        };
         let utr = within_feature
             && coding_region
                 .is_some_and(|(a, b)| !overlap(min_vf, max_vf, a, b) || min_vf < a || max_vf > b);
@@ -208,13 +342,21 @@ impl<'a> Coding<'a> {
             cdna,
             cds,
             translation,
-            codons,
-            peptides,
+            ref_codon,
+            alt_codon,
+            ref_pep,
+            alt_pep,
+            display_codons,
+            amino_acids,
             coding,
             within_cds,
             within_cdna,
             in_exon,
             utr,
+            intron,
+            intron_boundary,
+            ie,
+            codon_table: ct.codon_table,
         }
     }
 
@@ -357,10 +499,7 @@ impl Coding<'_> {
     }
     /// `_get_peptide_alleles`: (ref, alt) with `-` as empty, when both are set.
     fn peptides(&self) -> Option<(String, String)> {
-        if !self.unambiguous() {
-            return None;
-        }
-        let (r, a) = self.peptides.as_ref()?;
+        let (r, a) = (self.ref_pep.as_ref()?, self.alt_pep.as_ref()?);
         if !truthy(r) || !truthy(a) {
             return None;
         }
@@ -375,17 +514,14 @@ impl Coding<'_> {
     }
     /// `$bvfoa->peptide`.
     fn alt_peptide(&self) -> Option<String> {
-        if !self.unambiguous() {
-            return None;
-        }
-        self.peptides.as_ref().map(|(_, a)| a.clone())
+        self.alt_pep.clone()
     }
     /// `_get_codon_alleles`.
     fn codons(&self) -> Option<(String, String)> {
         if self.frameshift() {
             return None;
         }
-        let (r, a) = self.codons.as_ref()?;
+        let (r, a) = (self.ref_codon.as_ref()?, self.alt_codon.as_ref()?);
         let dash = |s: &str| {
             if s == "-" {
                 String::new()
@@ -485,15 +621,9 @@ impl Coding<'_> {
         if seq.len() < translateable.len() {
             return true;
         }
-        let at = translateable.len().saturating_sub(3);
-        let codon = seq.get(at..at + 3).unwrap_or("");
-        let table = if fastvep_genome::is_mitochondrial(&self.tr.chromosome) {
-            fastvep_genome::mitochondrial_codon_table()
-        } else {
-            fastvep_genome::CodonTable::standard()
-        };
-        let pep = table.translate_seq(codon.as_bytes());
-        pep != b"*"
+        let codon = crate::vep_codon::substr(&seq, translateable.len() as i64 - 3, Some(3))
+            .unwrap_or_default();
+        crate::vep_codon::translate(&codon, self.codon_table) != "*"
     }
     fn inv_start_altered(&self) -> bool {
         if !self.unambiguous() || !self.overlaps_start_codon() {
@@ -704,10 +834,39 @@ fn coding_terms(c: &Coding) -> Vec<&'static str> {
     out
 }
 
-/// VEP 104's terms for an allele: fastVEP's non-coding terms (mapped with [`vep104`]) and the
-/// coding terms recomputed with VEP 104's rules.
-pub fn vep104_with_coding(terms: &[Consequence], c: &Coding) -> (Vec<&'static str>, &'static str) {
-    let (mapped, _) = vep104(terms);
+/// The splice and intron terms (`donor_splice_site`, `acceptor_splice_site`, `splice_region`,
+/// `within_intron`, with their includes), acceptor before donor as seeded VEP lists them.
+fn intron_terms(c: &Coding) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    let forward = matches!(c.tr.strand, fastvep_core::Strand::Forward);
+    let ie = &c.ie;
+    if c.intron_boundary {
+        let (donor, acceptor) = if forward {
+            (ie.start_splice_site, ie.end_splice_site)
+        } else {
+            (ie.end_splice_site, ie.start_splice_site)
+        };
+        if acceptor {
+            out.push("splice_acceptor_variant");
+        }
+        if donor {
+            out.push("splice_donor_variant");
+        }
+        if !donor && !acceptor && ie.splice_region {
+            out.push("splice_region_variant");
+        }
+    }
+    if c.intron && ie.intronic {
+        out.push("intron_variant");
+    }
+    out
+}
+
+/// VEP 104's terms for an allele and their IMPACT: fastVEP's upstream, downstream and NMD terms
+/// (its others follow VEP 105+ and are recomputed here), the splice and intron terms, the coding
+/// terms and the UTR and non-coding-transcript terms, by rank (a stable sort, as Perl's).
+/// `mature_miRNA_variant` (tier 2) needs a `miRNA` attribute, which the cache has none of.
+pub fn vep104_terms(fastvep: &[Consequence], c: &Coding) -> (Vec<&'static str>, &'static str) {
     // tier 1: a deletion of the whole transcript is only transcript_ablation
     let r = if c.ref_allele == "-" {
         ""
@@ -719,23 +878,20 @@ pub fn vep104_with_coding(terms: &[Consequence], c: &Coding) -> (Vec<&'static st
     if c.vf_start <= c.tr.start as i64 && c.vf_end >= c.tr.end as i64 && deletion {
         return (vec!["transcript_ablation"], "HIGH");
     }
-    const TRANSCRIPT_TERMS: &[&str] = &[
-        "5_prime_UTR_variant",
-        "3_prime_UTR_variant",
-        "non_coding_transcript_exon_variant",
-        "non_coding_transcript_variant",
-    ];
-    let mut out: Vec<&'static str> = mapped
-        .into_iter()
-        .filter(|t| !CODING_TERMS.contains(t) && !TRANSCRIPT_TERMS.contains(t))
+    let mut out: Vec<&'static str> = fastvep
+        .iter()
+        .map(|t| t.so_term())
+        .filter(|t| {
+            matches!(
+                *t,
+                "upstream_gene_variant" | "downstream_gene_variant" | "NMD_transcript_variant"
+            )
+        })
         .collect();
-    // tier 2 (mature_miRNA_variant) excludes the tier 3 terms, the coding ones included
-    if out.contains(&"mature_miRNA_variant") {
-        out = vec!["mature_miRNA_variant"];
-    } else {
-        out.extend(coding_terms(c));
-        out.extend(c.transcript_terms());
-    }
+    out.extend(intron_terms(c));
+    out.extend(coding_terms(c));
+    out.extend(c.transcript_terms());
+    out.dedup();
     if out.is_empty() {
         out.push("sequence_variant");
     }
@@ -745,4 +901,56 @@ pub fn vep104_with_coding(terms: &[Consequence], c: &Coding) -> (Vec<&'static st
         .and_then(|t| term(t))
         .map_or("MODIFIER", |(_, i)| i);
     (out, impact)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn differing() {
+        // an MNV: two changed runs
+        assert_eq!(
+            differing_regions("AGGAGC", "CGGAGT", 6),
+            vec![(0, 0), (5, 5)]
+        );
+        // a delins: the longer allele's extra bases differ too
+        assert_eq!(differing_regions("AC", "TCG", 2), vec![(0, 0), (2, 2)]);
+        // single bases and indels: the whole reference
+        assert_eq!(differing_regions("A", "G", 1), vec![(0, 0)]);
+        assert_eq!(differing_regions("-", "AT", 0), vec![(0, -1)]);
+        assert_eq!(differing_regions("ACG", "-", 3), vec![(0, 2)]);
+    }
+
+    #[test]
+    fn introns_and_splice_sites() {
+        // one intron 100..199; a frameshift intron 300..310
+        let introns = [(100, 199, false), (300, 310, true)];
+        let ie = |s: i64, e: i64, r: &str, a: &str| intron_effects(&introns, s, e, r, a);
+        // the first two intron bases are the start splice site
+        let (i, b, x) = ie(101, 101, "A", "G");
+        assert!(i && b && x.start_splice_site && !x.intronic && !x.splice_region);
+        // 3-8 bp in: splice region and intronic
+        let (_, _, x) = ie(105, 105, "A", "G");
+        assert!(x.splice_region && x.intronic);
+        // deep in the intron: intronic only, no boundary
+        let (i, b, x) = ie(150, 150, "A", "G");
+        assert!(i && !b && x.intronic && !x.splice_region);
+        // 1-3 bp into the exon: splice region only
+        let (_, b, x) = ie(98, 98, "A", "G");
+        assert!(b && x.splice_region && !x.intronic);
+        // an insertion between the 2nd and 3rd intron bases is intronic and in the region
+        let (_, _, x) = ie(102, 101, "-", "T");
+        assert!(x.intronic && x.splice_region);
+        // an MNV whose last differing base is far from the splice region: the last region wins
+        let (_, _, x) = ie(96, 105, "AAAAAAAAAA", "CAAAAAAAAT");
+        assert!(x.splice_region);
+        let (_, _, x) = ie(92, 97, "AAAAAA", "CAAAAT");
+        assert!(x.splice_region);
+        let (_, _, x) = ie(88, 97, "AAAAAAAAAA", "TAAAAAAAAA");
+        assert!(!x.splice_region);
+        // inside a frameshift intron
+        let (_, _, x) = ie(305, 305, "A", "G");
+        assert!(x.within_frameshift_intron && !x.intronic && !x.start_splice_site);
+    }
 }

@@ -9,7 +9,7 @@ pub enum Seg {
     Gap { start: i64, end: i64 },
 }
 
-/// One exon (or part of one, around a length-changing RNA edit): cDNA and genomic ranges.
+/// One exon: cDNA and genomic ranges.
 #[derive(Debug, Clone, Copy)]
 struct Pair {
     cdna_start: i64,
@@ -29,80 +29,28 @@ pub struct TranscriptMapper {
     start_phase: i64,
 }
 
-/// An RNA edit: 1-based cDNA start and end, and the replacement (`_rna_edit`).
-pub struct RnaEdit {
-    pub start: i64,
-    pub end: i64,
-    pub alt_len: i64,
-}
-
 impl TranscriptMapper {
-    /// `exons` in transcript order: (genomic start, end, strand, phase).
+    /// `exons` in transcript order: (genomic start, end, strand, phase). VEP leaves
+    /// `edits_enabled` unset (and the cache has no `_rna_edit` attributes), so RNA edits do not
+    /// move cDNA coordinates.
     pub fn new(
         exons: &[(i64, i64, i64, i64)],
         cdna_coding_start: Option<i64>,
         cdna_coding_end: Option<i64>,
-        mut edits: Vec<RnaEdit>,
     ) -> TranscriptMapper {
         // `_load_mapper`
-        edits.sort_by_key(|e| e.start);
-        let mut edits = std::collections::VecDeque::from(edits);
         let mut pairs = Vec::new();
-        let mut edit_shift = 0;
         let mut cdna_end = 0;
         for &(gs, ge, strand, _) in exons {
-            let (mut gen_start, mut gen_end) = (gs, ge);
-            let mut cdna_start = cdna_end + 1;
+            let cdna_start = cdna_end + 1;
             cdna_end = cdna_start + (ge - gs + 1) - 1;
-            while edits
-                .front()
-                .is_some_and(|e| e.start + edit_shift <= cdna_end)
-            {
-                let e = edits.pop_front().unwrap();
-                let len_diff = e.alt_len - (e.end - e.start + 1);
-                if len_diff != 0 {
-                    let prev_cdna_end = e.start + edit_shift - 1;
-                    let prev_len = prev_cdna_end - cdna_start + 1;
-                    let (prev_gen_start, prev_gen_end) = if strand == 1 {
-                        (gen_start, gen_start + prev_len - 1)
-                    } else {
-                        (gen_end - prev_len + 1, gen_end)
-                    };
-                    if prev_len > 0 {
-                        pairs.push(Pair {
-                            cdna_start,
-                            cdna_end: prev_cdna_end,
-                            gen_start: prev_gen_start,
-                            gen_end: prev_gen_end,
-                            ori: strand,
-                        });
-                    }
-                    cdna_start = prev_cdna_end + 1;
-                    if strand == 1 {
-                        gen_start = prev_gen_end + 1;
-                    } else {
-                        gen_end = prev_gen_start - 1;
-                    }
-                    cdna_end += len_diff;
-                    if len_diff > 0 {
-                        cdna_start += len_diff;
-                    } else if strand == 1 {
-                        gen_start -= len_diff;
-                    } else {
-                        gen_end += len_diff;
-                    }
-                    edit_shift += len_diff;
-                }
-            }
-            if cdna_end - cdna_start + 1 > 0 {
-                pairs.push(Pair {
-                    cdna_start,
-                    cdna_end,
-                    gen_start,
-                    gen_end,
-                    ori: strand,
-                });
-            }
+            pairs.push(Pair {
+                cdna_start,
+                cdna_end,
+                gen_start: gs,
+                gen_end: ge,
+                ori: strand,
+            });
         }
         pairs.sort_by_key(|p| (p.gen_start, p.gen_end));
         TranscriptMapper {
@@ -340,20 +288,10 @@ mod tests {
 
     /// Two exons 100-109 and 200-209; coding cDNA 3..18.
     fn plus() -> TranscriptMapper {
-        TranscriptMapper::new(
-            &[(100, 109, 1, -1), (200, 209, 1, -1)],
-            Some(3),
-            Some(18),
-            vec![],
-        )
+        TranscriptMapper::new(&[(100, 109, 1, -1), (200, 209, 1, -1)], Some(3), Some(18))
     }
     fn minus() -> TranscriptMapper {
-        TranscriptMapper::new(
-            &[(200, 209, -1, -1), (100, 109, -1, -1)],
-            Some(3),
-            Some(18),
-            vec![],
-        )
+        TranscriptMapper::new(&[(200, 209, -1, -1), (100, 109, -1, -1)], Some(3), Some(18))
     }
 
     #[test]
@@ -400,24 +338,7 @@ mod tests {
         assert_eq!(ends(&cds), (None, Some(3)));
         assert_eq!(ends(&m.genomic2pep(105, 105, 1)), (Some(2), Some(2)));
         // non-coding
-        let nc = TranscriptMapper::new(&[(100, 109, 1, -1)], None, None, vec![]);
+        let nc = TranscriptMapper::new(&[(100, 109, 1, -1)], None, None);
         assert!(matches!(nc.genomic2cds(101, 101, 1)[0], Seg::Gap { .. }));
-    }
-
-    #[test]
-    fn rna_edit_shifts_cdna() {
-        // one base inserted after cDNA 3 of exon 1
-        let m = TranscriptMapper::new(
-            &[(100, 109, 1, -1)],
-            None,
-            None,
-            vec![RnaEdit {
-                start: 4,
-                end: 3,
-                alt_len: 1,
-            }],
-        );
-        assert_eq!(ends(&m.genomic2cdna(102, 102, 1)), (Some(3), Some(3)));
-        assert_eq!(ends(&m.genomic2cdna(103, 103, 1)), (Some(5), Some(5)));
     }
 }

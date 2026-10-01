@@ -93,10 +93,16 @@ which depend on the chromosomes' merge order and differ between runs without the
 - With `--vep_store` the pipeline does not use the original files: PREPARE_DATA links the
   store's copies under the original names, so they may be removed. Input `aim vep` does not
   support (exit status 3) then gets VEP's rows and `aim vep-annotate`'s lookups from the store;
-  input neither supports (structural variants, i.e. symbolic ALT alleles such as `<DEL>`, and
-  malformed lines) stops the task, since VEP's own lookups would need the originals. Checked on
-  the ClinVar sample with a data directory without them (the same outputs) and on a VCF with
-  a `<DEL>` record (the task stops with that message).
+  input neither supports (malformed lines) stops the task, since VEP's own lookups would need the
+  originals. Checked on the ClinVar sample with a data directory without them (the same outputs).
+- Decision (2026-10-01): with `--vep_store`, structural variants are removed from the input
+  (FILTER_UNPASSED, `bin/drop_structural.awk`, the same test `aim vep-annotate` uses: a symbolic or
+  closed breakend ALT, or SVTYPE, on alleles that are not plain ACGT). In v1.1.3 such a record gets
+  no lookup values at all (VEP runs plugins only on ordinary variants; the ClinVar and HGMD files
+  have no symbolic records) but is scored. On chr21 of the ClinVar sample plus one `<DEL>`, v1.1.3
+  ranks it last (2e-9); with it removed, no other variant's prediction changes, the variants tied
+  last move up one rank, and the per-sample tier counts (`No.Var.H`, `TierAD`, ...) count one
+  variant fewer. The store-only run on that input equals v1.1.3 on the input without the `<DEL>`.
 - A lookup refuses a store that left out a field it reads (CADD: anything but RawScore;
   SpliceAI: anything but ID, QUAL, FILTER; custom VCFs: anything but QUAL, FILTER; REVEL:
   anything; dbNSFP: its position, alt, aaref, aaalt or a requested column).

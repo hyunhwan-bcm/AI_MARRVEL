@@ -239,6 +239,18 @@ process FILTER_UNPASSED {
         echo "Pipeline will proceed with unfiltered VCF file."
         cp ${params.run_id}-add-id.vcf.gz ${params.run_id}.filt.vcf.gz
     fi
+
+    # With --vep_store, structural variants are removed: aim's lookups do not support them and
+    # VEP's own, the fallback, need the original lookup files (rust/DESIGN.md)
+    if [ -n "${params.vep_store ?: ''}" ]; then
+        bcftools view ${params.run_id}.filt.vcf.gz \
+            | awk -F'\t' -f ${projectDir}/bin/drop_structural.awk 2> sv_dropped.txt \
+            | bcftools view -Oz -o ${params.run_id}.nosv.vcf.gz
+        if [ "\$(cat sv_dropped.txt)" -gt 0 ]; then
+            mv ${params.run_id}.nosv.vcf.gz ${params.run_id}.filt.vcf.gz
+            echo "--vep_store: removed \$(cat sv_dropped.txt) structural variants" >&2
+        fi
+    fi
     tabix -p vcf ${params.run_id}.filt.vcf.gz
     """
 }

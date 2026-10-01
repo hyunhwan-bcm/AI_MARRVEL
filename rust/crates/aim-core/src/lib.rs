@@ -30,5 +30,6 @@ pub mod vep_mapper;
 pub mod vep_regulatory;
 pub mod vep_rows;
 pub mod vep_skeleton;
+pub mod vep_store;
 pub mod vep_transcripts;
 pub mod xgb;

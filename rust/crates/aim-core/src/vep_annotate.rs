@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
-use crate::tabix::Tabix;
+use crate::vep_store::Source;
 
 fn err(msg: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg.into())
@@ -485,7 +485,7 @@ pub struct Custom {
     pub file_arg: String,
     pub short: String,
     pub fields: Vec<String>,
-    tbx: Tabix,
+    tbx: Source,
     valid: HashSet<String>,
     is_clinvar: bool,
     synonyms: Synonyms,
@@ -550,7 +550,7 @@ impl Custom {
                 "--custom {spec}: only vcf,exact,0 is supported"
             )));
         }
-        let mut tbx = Tabix::open(&base.join(p[0]))?;
+        let mut tbx = Source::open(&base.join(p[0]))?;
         let header = tbx.header()?;
         // BaseVCF4 keeps the last ##source= value
         let source = header
@@ -741,13 +741,13 @@ fn vcf_get_end(start: i64, r: &str, info: &str) -> i64 {
 /// A tabix file as a plugin reads it: sequence names mapped by adding or removing `chr`.
 struct PluginFile {
     path: String,
-    tbx: Tabix,
+    tbx: Source,
     valid: HashSet<String>,
 }
 
 impl PluginFile {
     fn open(path: &str, base: &Path) -> io::Result<PluginFile> {
-        let tbx = Tabix::open(&base.join(path))?;
+        let tbx = Source::open(&base.join(path))?;
         let valid = tbx.seqnames().iter().cloned().collect();
         Ok(PluginFile {
             path: path.to_owned(),
@@ -844,6 +844,8 @@ enum Plugin {
     },
     Cadd {
         files: Vec<PluginFile>,
+        /// false when a store left out RawScore (its 5th column): no CADD_RAW column
+        raw: bool,
     },
     DbNsfp {
         file: PluginFile,
@@ -851,6 +853,8 @@ enum Plugin {
         cols: Vec<String>,
         filter: Option<HashSet<String>>,
         grch37: bool,
+        /// columns ALL leaves out because a store does not have them
+        left_out: usize,
     },
 }
 
@@ -904,7 +908,11 @@ impl Plugin {
                     .filter(|f| f.ends_with(".gz") || base.join(f).exists())
                     .map(|f| PluginFile::open(f, base))
                     .collect::<io::Result<Vec<_>>>()?;
-                Ok(Plugin::Cadd { files })
+                let raw = files.iter().all(|f| !f.tbx.dropped().contains(&4));
+                if !raw && files.iter().any(|f| !f.tbx.dropped().contains(&4)) {
+                    return Err(err("CADD: RawScore is in some files but not others"));
+                }
+                Ok(Plugin::Cadd { files, raw })
             }
             "dbNSFP" => {
                 let mut i = 0;
@@ -976,14 +984,45 @@ impl Plugin {
                 if params.get(i).is_some_and(|p| p.starts_with("pep_match=")) {
                     return Err(unsupported("dbNSFP: pep_match is not supported"));
                 }
+                // a store may have left columns out: ALL means the ones it kept
+                let dropped: Vec<&str> = file
+                    .tbx
+                    .dropped()
+                    .iter()
+                    .filter_map(|&i| headers.get(i).map(String::as_str))
+                    .collect();
+                let pos_col = if grch37 {
+                    "hg19_pos(1-based)"
+                } else {
+                    "pos(1-based)"
+                };
+                for h in [pos_col, "alt", "aaref", "aaalt"] {
+                    if dropped.contains(&h) {
+                        return Err(err(format!("dbNSFP: the store has no {h} column")));
+                    }
+                }
                 let mut cols: Vec<String> = Vec::new();
+                let mut left_out = 0;
                 for &c in &params[i..] {
                     if c == "ALL" {
-                        cols = headers.clone();
+                        let mut all = headers.clone();
+                        all.sort();
+                        all.dedup();
+                        cols = headers
+                            .iter()
+                            .filter(|h| !dropped.contains(&h.as_str()))
+                            .cloned()
+                            .collect();
+                        cols.sort();
+                        cols.dedup();
+                        left_out = all.len() - cols.len();
                         break;
                     }
                     if !headers.iter().any(|h| h == c) {
                         return Err(err(format!("dbNSFP: column {c} not in header")));
+                    }
+                    if dropped.contains(&c) {
+                        return Err(unsupported(format!("dbNSFP: the store has no {c} column")));
                     }
                     cols.push(c.to_owned());
                 }
@@ -998,6 +1037,7 @@ impl Plugin {
                     cols,
                     filter,
                     grch37,
+                    left_out,
                 })
             }
             _ => Err(unsupported(format!("plugin {name} is not supported"))),
@@ -1020,21 +1060,36 @@ impl Plugin {
                 files: files(f)?,
                 cutoff: cutoff.clone(),
             },
-            Plugin::Cadd { files: f } => Plugin::Cadd { files: files(f)? },
+            Plugin::Cadd { files: f, raw } => Plugin::Cadd {
+                files: files(f)?,
+                raw: *raw,
+            },
             Plugin::DbNsfp {
                 file,
                 headers,
                 cols,
                 filter,
                 grch37,
+                left_out,
             } => Plugin::DbNsfp {
                 file: file.try_clone()?,
                 headers: headers.clone(),
                 cols: cols.clone(),
                 filter: filter.clone(),
                 grch37: *grch37,
+                left_out: *left_out,
             },
         })
+    }
+
+    /// Output columns VEP would add that this plugin leaves out, its source being a store
+    /// without them.
+    fn left_out(&self) -> usize {
+        match self {
+            Plugin::Cadd { raw, .. } => usize::from(!raw),
+            Plugin::DbNsfp { left_out, .. } => *left_out,
+            _ => 0,
+        }
     }
 
     /// Output columns and descriptions, keys sorted (`get_plugin_headers`).
@@ -1056,10 +1111,13 @@ impl Plugin {
                 h.push(("SpliceAI_pred".into(), "SpliceAI predicted effect on splicing. These include delta scores (DS) and delta positions (DP) for acceptor gain (AG), acceptor loss (AL), donor gain (DG), and donor loss (DL). Format: SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".into()));
                 h
             }
-            Plugin::Cadd { .. } => vec![
-                ("CADD_PHRED".into(), "PHRED-like scaled CADD score".into()),
-                ("CADD_RAW".into(), "Raw CADD score".into()),
-            ],
+            Plugin::Cadd { raw, .. } => {
+                let mut h = vec![("CADD_PHRED".into(), "PHRED-like scaled CADD score".into())];
+                if *raw {
+                    h.push(("CADD_RAW".into(), "Raw CADD score".into()));
+                }
+                h
+            }
             Plugin::DbNsfp { cols, .. } => cols
                 .iter()
                 .map(|c| (c.clone(), format!("{c} from dbNSFP file")))
@@ -1167,7 +1225,7 @@ impl Plugin {
                 cache.genes.insert(row.allele.to_owned(), by_gene);
                 out
             }
-            Plugin::Cadd { files } => {
+            Plugin::Cadd { files, raw } => {
                 if !row
                     .allele
                     .bytes()
@@ -1197,10 +1255,10 @@ impl Plugin {
                         a = perl_or_dash(&a[1.min(a.len())..]);
                     }
                     if !akeys.as_ref().unwrap().matches(&r, &[&a], s).is_empty() {
-                        found = vec![
-                            ("CADD_RAW".into(), f.get(4).map(|x| (*x).to_owned())),
-                            ("CADD_PHRED".into(), f.get(5).map(|x| (*x).to_owned())),
-                        ];
+                        found = vec![("CADD_PHRED".into(), f.get(5).map(|x| (*x).to_owned()))];
+                        if *raw {
+                            found.insert(0, ("CADD_RAW".into(), f.get(4).map(|x| (*x).to_owned())));
+                        }
                         break;
                     }
                 }
@@ -1213,6 +1271,7 @@ impl Plugin {
                 cols,
                 filter,
                 grch37,
+                ..
             } => {
                 if !row.is_transcript() {
                     return Vec::new();
@@ -1325,6 +1384,10 @@ fn warn_once(file: &str, e: &str) {
 
 // ---------------------------------------------------------------------------------------------
 // Driver
+
+/// The header line that gives the number of columns VEP writes when lookup stores left some
+/// out (read by `features`).
+pub const FULL_COLUMNS: &str = "## AIM_VEP_COLUMNS=";
 
 /// FLAG_FIELDS columns that VEP places after `custom`'s SOURCE (first occurrences only).
 const AFTER_SOURCE: &[&str] = &[
@@ -1662,7 +1725,7 @@ pub fn annotate(
             }
         } else if let Some(h) = l.strip_prefix('#').filter(|_| !l.starts_with("##")) {
             break h.split('\t').map(str::to_owned).collect();
-        } else if !in_descs {
+        } else if !in_descs && !l.starts_with(FULL_COLUMNS) {
             top.push(l);
         }
     };
@@ -1720,6 +1783,16 @@ pub fn annotate(
     };
     for l in &top {
         writeln!(out, "{l}")?;
+    }
+    // pandas reads the table in chunks whose length follows its column count, and AIM's
+    // feature step reproduces that: it needs the count VEP would have written
+    let left_out: usize = lookups.plugins.iter().map(Plugin::left_out).sum();
+    if left_out > 0 {
+        writeln!(
+            out,
+            "{FULL_COLUMNS}{} (lookup stores left out {left_out} columns AIM does not read)",
+            fields.len() + left_out
+        )?;
     }
     writeln!(out, "## Column descriptions:")?;
     for f in &fields {

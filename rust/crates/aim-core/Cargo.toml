@@ -22,6 +22,11 @@ noodles-core = "0.20.0"
 noodles-fasta = "0.66.0"
 # Perl Storable reader, for the VEP cache's serialised chunks
 chrysalis = "0.1.0"
+# Parquet for the lookup store (`aim store build`): position-sorted, zstd-compressed columns
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
+arrow-array = "60"
+arrow-schema = "60"
+bytes = "1"
 # fastVEP (Apache-2.0): transcript model and consequence prediction, v0.4.0
 fastvep-core = { git = "https://github.com/Huang-lab/fastVEP", tag = "v0.4.0" }
 fastvep-genome = { git = "https://github.com/Huang-lab/fastVEP", tag = "v0.4.0" }

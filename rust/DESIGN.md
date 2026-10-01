@@ -51,6 +51,50 @@ a byte-identical copy of the GRCh37 VEP cache under `vep/hg38/`, and
 `mod5_diffusion/combined_score.hdf5`. They stay in place. Compact per-field stores built for the
 Rust port are added next to the originals, never in place of them.
 
+## Lookup store
+
+`aim store build` (`vep_store.rs`, 2026-10-01) converts a tabix lookup file into Parquet with zstd
+(the `parquet` crate: ~35 more crates), one file per sequence, rows in file order, each field as
+its original text (the position as an integer that prints back the same). Files that keep more
+than 16 fields keep them in one tab-joined column, so a query decodes a few columns. A query
+reads the position column's page index, decodes position, REF and span for the candidate pages,
+then the other columns for the overlapping rows only, and rebuilds the lines tabix returns
+(same records, same order, same text; `aim store check` and the build's read-back compare them),
+so the lookups parse them unchanged. The lookups accept a store directory wherever a file is
+given. A build can leave fields out; the store returns them empty, and the lookups then omit
+what they would fill. For hg38 the pipeline (`--vep_store`) uses stores that keep what AIM reads:
+
+| Source | Original | Store | Left out |
+|---|---|---|---|
+| CADD | 80.6 GiB | 23.6 GiB | RawScore (CADD_RAW) |
+| SpliceAI SNV | 26.6 GiB | 2.01 GiB | DP_AG..DP_DL (SpliceAI_pred keeps SYMBOL and DS_*); ALLELE is stored only when not ALT |
+| SpliceAI indel | 64.1 GiB | 7.13 GiB | the same |
+| dbNSFP 4.1a | 30.5 GiB | 3.50 GiB | 338 of 367 columns (kept: the 24 AIM reads and `chr`, `pos(1-based)`, `alt`, `aaref`, `aaalt`) |
+| **Total** | **202 GiB** | **36.3 GiB** | (build: 54 min on 12 threads; every file read back and compared) |
+
+Checked: on chr21 of each source, 20,000 random regions return the same records as tabix; the
+ClinVar sample and HG002 (whole genome) with `--vep_store` give the same `scores.txt` and the
+same predictions, confidence and ranking for all four models as without it (HG002 8 min 14 s
+instead of 9 min 05 s); the only other differences are the last digits of three imputed columns,
+which depend on the chromosomes' merge order and differ between runs without the store too.
+
+- pandas types the VEP table in chunks of `2**20 // n_columns` rows (`pdread.rs`), so the
+  values `scores.csv` prints depend on the table's width. Without dbNSFP's other columns the
+  table has 120 columns, not 459 (8,192-row chunks instead of 2,048). `aim vep-annotate`
+  therefore writes `## AIM_VEP_COLUMNS=<n>` with the width VEP writes, and `aim features` types
+  the table as that wide (it refuses a count below the table's width). The features and
+  predictions are then the same as from VEP's full table.
+- What differs in the VEP table: those columns are absent, SpliceAI_pred has 5 parts not 9, and
+  on rows dbNSFP matched VEP's own APPRIS and TSL keep VEP's values (in v1.1.3 dbNSFP's
+  columns of the same names overwrite them). AIM reads none of these.
+- gnomAD, ClinVar, HGMD and REVEL stay tabix files. The bucket's hg38 gnomAD index does not
+  match its data, so a store cannot be built from it (the build reads the file through the
+  index and stops at the first bad block); as deployed it returns no records anyway.
+- The VEP fallback (exit status 3) still runs on the original files, which the pipeline still
+  stages; removing them is not supported yet.
+- On macOS a build's resident memory includes up to ~1.6 GB of freed blocks the allocator
+  caches (`MallocLargeCache=0` shows ~80 MB for a dbNSFP build).
+
 ## Findings that affect "identical"
 
 - ANNOTATE_BY_VEP runs VEP with `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0` (#54), so its output is

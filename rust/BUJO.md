@@ -182,3 +182,5 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – gnomAD (index broken on hg38, returns nothing), ClinVar, HGMD, REVEL stay tabix
   - × Review of #65 (0 differences on 2,700 synthetic edge regions and 40,500 real queries): a store without a field a lookup reads was accepted and its values went missing → refused per lookup; repeated/blank column names refused for left-out columns; `store check` samples chromosome ends
   - × No originals: with `--vep_store` PREPARE_DATA links the store under the original names; ClinVar sample on a data directory without them gives the same outputs; unsupported input (e.g. `<DEL>`) stops the task with a message (VEP's own lookups would need the originals)
+  - – SVs in v1.1.3 (chr21 + one `<DEL>`): no lookup values (plugins skip structural variants), ranked last; new version with originals identical to v1.1.3 with and without it
+  - o Decision (user): remove structural variants with `--vep_store` (FILTER_UNPASSED, `bin/drop_structural.awk`); store-only run with the `<DEL>` = v1.1.3 without it; other predictions unchanged, tied-last ranks and tier counts shift

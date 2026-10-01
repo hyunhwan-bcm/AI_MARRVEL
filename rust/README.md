@@ -56,9 +56,9 @@ nextflow run main.nf ... --rust true --rust_vep true --vep_store $S   # an absol
 ```
 
 With `--vep_store` the pipeline does not read the original CADD, SpliceAI and dbNSFP files,
-so they can be removed from the data directory. Input that `aim` does not support (structural
-variants, malformed lines), which would otherwise fall back to VEP's own lookups, then stops
-the task with a message.
+so they can be removed from the data directory. Structural variants (symbolic ALT alleles such
+as `<DEL>`) are then removed from the input, since their lookups would need VEP and the original
+files; the rest of the output is as if the input had none (rust/DESIGN.md).
 
 The VEP table then lacks the columns left out (CADD_RAW, SpliceAI's delta positions in
 SpliceAI_pred, dbNSFP's other columns) and has a `## AIM_VEP_COLUMNS=` line with the count

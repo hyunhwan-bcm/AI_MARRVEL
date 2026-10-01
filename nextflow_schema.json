@@ -99,7 +99,7 @@
         },
         "vep_store": {
           "type": "string",
-          "description": "With --rust on hg38: an absolute path to a lookup store from `aim store build`, holding copies of the CADD, SpliceAI and dbNSFP files under their file names, which replace those files (the originals are then not read; input aim does not support stops the task instead of falling back to VEP's lookups)."
+          "description": "With --rust on hg38: an absolute path to a lookup store from `aim store build`, holding copies of the CADD, SpliceAI and dbNSFP files under their file names, which replace those files (the originals are then not read; structural variants are removed from the input)."
         },
         "aim_bin": {
           "type": "string",

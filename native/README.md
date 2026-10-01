@@ -32,8 +32,9 @@ REF_DIR=/path/to/aim-data native/run_fixture.sh   # FIXTURE, OUT, STORE_DIR opti
 ```
 
 Each task reserves 4 GB here (`conf/base.config` asks 25 GB, which on a 32 GB machine lets
-only one task run at a time); pass `-c` with a larger `process.memory` for unusually large
-inputs.
+only one task run at a time; Docker and Singularity runs keep 25 GB). For unusually large
+inputs, add a second `-c` after `native/native.config`, e.g. a file with
+`process.memory = 8.GB`.
 
 ## Known data issue: hg38 gnomAD genome index
 

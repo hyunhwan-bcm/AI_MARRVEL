@@ -90,8 +90,16 @@ which depend on the chromosomes' merge order and differ between runs without the
 - gnomAD, ClinVar, HGMD and REVEL stay tabix files. The bucket's hg38 gnomAD index does not
   match its data, so a store cannot be built from it (the build reads the file through the
   index and stops at the first bad block); as deployed it returns no records anyway.
-- The VEP fallback (exit status 3) still runs on the original files, which the pipeline still
-  stages; removing them is not supported yet.
+- With `--vep_store` the pipeline does not use the original files: PREPARE_DATA links the
+  store's copies under the original names, so they may be removed. Input `aim vep` does not
+  support (exit status 3) then gets VEP's rows and `aim vep-annotate`'s lookups from the store;
+  input neither supports (structural variants, i.e. symbolic ALT alleles such as `<DEL>`, and
+  malformed lines) stops the task, since VEP's own lookups would need the originals. Checked on
+  the ClinVar sample with a data directory without them (the same outputs) and on a VCF with
+  a `<DEL>` record (the task stops with that message).
+- A lookup refuses a store that left out a field it reads (CADD: anything but RawScore;
+  SpliceAI: anything but ID, QUAL, FILTER; custom VCFs: anything but QUAL, FILTER; REVEL:
+  anything; dbNSFP: its position, alt, aaref, aaalt or a requested column).
 - On macOS a build's resident memory includes up to ~1.6 GB of freed blocks the allocator
   caches (`MallocLargeCache=0` shows ~80 MB for a dbNSFP build).
 

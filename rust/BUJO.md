@@ -179,4 +179,6 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - ! dbNSFP's 367 columns cost a query 22 ms as Parquet columns (one decode each); kept in one text column, and only the overlapping rows decoded: 8 µs (tabix 0.6 ms)
   - ! macOS keeps up to ~1.6 GB of freed large blocks in its allocator cache (`MallocLargeCache=0`: ~80 MB for a dbNSFP build)
   - – chr21: 20,000 random regions per source identical to tabix; ClinVar sample and HG002 with the store: `scores.txt` and all four models' predictions identical; HG002 8 min 14 s (9 min 05 s without)
-  - – gnomAD (index broken on hg38, returns nothing), ClinVar, HGMD, REVEL stay tabix; the VEP fallback still reads the originals, which the pipeline still stages
+  - – gnomAD (index broken on hg38, returns nothing), ClinVar, HGMD, REVEL stay tabix
+  - × Review of #65 (0 differences on 2,700 synthetic edge regions and 40,500 real queries): a store without a field a lookup reads was accepted and its values went missing → refused per lookup; repeated/blank column names refused for left-out columns; `store check` samples chromosome ends
+  - × No originals: with `--vep_store` PREPARE_DATA links the store under the original names; ClinVar sample on a data directory without them gives the same outputs; unsupported input (e.g. `<DEL>`) stops the task with a message (VEP's own lookups would need the originals)

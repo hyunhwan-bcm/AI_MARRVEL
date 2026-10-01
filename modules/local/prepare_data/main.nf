@@ -105,8 +105,8 @@ process SPLIT_DATA {
         path("data_only_vep/vep/${params.ref_ver}/clinvar_20220730.vcf.gz"), // vep_custom_clinvar
         path("data_only_vep/vep/${params.ref_ver}/HGMD_Pro_2022.2_${params.ref_ver}.vcf.gz"), // vep_custom_hgmd
         path("new_tabbed_revel*.tsv.gz", arity: 1), // vep_plugin_revel
-        path("data_only_vep/vep/${params.ref_ver}/spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz"), // vep_plugin_spliceai_snv
-        path("data_only_vep/vep/${params.ref_ver}/spliceai_scores.masked.indel.${params.ref_ver}.vcf.gz"), // vep_plugin_spliceai_indel
+        path("spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz"), // vep_plugin_spliceai_snv
+        path("spliceai_scores.masked.indel.${params.ref_ver}.vcf.gz"), // vep_plugin_spliceai_indel
         path("*_whole_genome_*.tsv.gz", arity: 1), // vep_plugin_cadd
         path("dbNSFP*.gz", arity: 1), // vep_plugin_dbnsfp
         path("data_only_vep/vep/${params.ref_ver}/*.tbi"), // vep_idx
@@ -142,9 +142,14 @@ process SPLIT_DATA {
     fi
 
     ln -s "./data_only_vep/vep/${params.ref_ver}/\${vep_gnomad_name}" .
-    ln -s "./data_only_vep/vep/${params.ref_ver}/\${vep_cadd_name}" .
-    ln -s "./data_only_vep/vep/${params.ref_ver}/\${vep_dbnsfp_name}" .
     ln -s "./data_only_vep/vep/${params.ref_ver}/\${vep_revel_name}" .
+    # SpliceAI, CADD and dbNSFP: a lookup store's copies (--vep_store) or the original files
+    large="${params.vep_store ?: ''}"
+    large=\${large:-./data_only_vep/vep/${params.ref_ver}}
+    ln -s "\$large/spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz" .
+    ln -s "\$large/spliceai_scores.masked.indel.${params.ref_ver}.vcf.gz" .
+    ln -s "\$large/\${vep_cadd_name}" .
+    ln -s "\$large/\${vep_dbnsfp_name}" .
 
     """
 }

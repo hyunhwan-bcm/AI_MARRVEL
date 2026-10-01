@@ -499,16 +499,17 @@ process ANNOTATE_BY_VEP {
         --plugin SpliceAI,snv=${vep_plugin_spliceai_snv},indel=${vep_plugin_spliceai_indel},cutoff=0.5 \\
         --plugin CADD,${vep_plugin_cadd},ALL \\
         --plugin dbNSFP,${vep_plugin_dbnsfp},ALL"""
-    // aim's lookups read a store's copies of the large plugin files when --vep_store is given
-    // (a directory per original file name); VEP, the fallback, reads the originals
-    def from_store = { f -> params.vep_store ? "${params.vep_store}/${f.name}" : "${f}" }
-    def aim_lookups = """--custom ${vep_custom_gnomad},gnomADg,vcf,exact,0,AF,AF_popmax,controls_nhomalt \\
-        --custom ${vep_custom_clinvar},clinvar,vcf,exact,0,CLNREVSTAT,CLNSIG,CLNSIGCONF \\
-        --custom ${vep_custom_hgmd},hgmd,vcf,exact,0,CLASS,GENE,PHEN,RANKSCORE \\
-        --plugin REVEL,${vep_plugin_revel},ALL \\
-        --plugin SpliceAI,snv=${from_store(vep_plugin_spliceai_snv)},indel=${from_store(vep_plugin_spliceai_indel)},cutoff=0.5 \\
-        --plugin CADD,${from_store(vep_plugin_cadd)},ALL \\
-        --plugin dbNSFP,${from_store(vep_plugin_dbnsfp)},ALL"""
+    // With --vep_store the SpliceAI, CADD and dbNSFP inputs are the store's copies, which only aim
+    // reads: input aim does not support gets VEP's rows and aim's lookups, and fails if aim cannot
+    // do those lookups either (VEP's own would need the original files).
+    def synonyms = """synonyms=${vep_dir_cache}/homo_sapiens/104_${ref_assembly}/chr_synonyms.txt"""
+    def aim_annotate = """${params.aim_bin} vep-annotate ${vcf.baseName}-vep.base.txt --vcf $vcf \\
+        --assembly ${ref_assembly} --threads ${task.cpus} \\
+        \$( [ -f \$synonyms ] && echo "--chr-synonyms \$synonyms" ) \\
+        ${vep_lookups} \\
+        --out ${vcf.baseName}-vep.txt"""
+    def no_store_fallback = """echo "aim vep-annotate: unsupported input; with --vep_store VEP's own lookups cannot run (they read the original files)" >&2
+        exit 3"""
     // VEP's output order depends on Perl's hash order (issue #54); a fixed seed makes it reproducible
     // (for a given Perl build). Batch size: the task's variant count, at least 50 (VEP's usual) and
     // at most vep_buffer_size. A larger batch reloads VEP's cache far less, but VEP gives each fork
@@ -525,9 +526,21 @@ process ANNOTATE_BY_VEP {
     rc=0
     ${params.aim_bin} vep --vcf $vcf --cache ${vep_dir_cache}/homo_sapiens/104_${ref_assembly} \\
         --assembly ${ref_assembly} --threads ${task.cpus} \\
-        ${aim_lookups} \\
+        ${vep_lookups} \\
         --out ${vcf.baseName}-vep.txt || rc=\$?
-    if [ \$rc -eq 3 ]; then
+    if [ \$rc -eq 3 ] && [ -n "${params.vep_store ?: ''}" ]; then
+        echo "aim vep: unsupported input, running VEP for the rows and aim for the store's lookups" >&2
+        \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} ${vep_common} --output_file ${vcf.baseName}-vep.base.txt
+        ${synonyms}
+        rc=0
+        ${aim_annotate} || rc=\$?
+        if [ \$rc -eq 3 ]; then
+            ${no_store_fallback}
+        elif [ \$rc -ne 0 ]; then
+            exit \$rc
+        fi
+        rm ${vcf.baseName}-vep.base.txt
+    elif [ \$rc -eq 3 ]; then
         echo "aim vep: unsupported input, running VEP" >&2
         \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} ${vep_common} --dir_plugins ${vep_dir_plugins} \\
             ${vep_lookups} --output_file ${vcf.baseName}-vep.txt
@@ -541,14 +554,12 @@ process ANNOTATE_BY_VEP {
     VEP=\${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep}
     \$VEP ${vep_common} --output_file ${vcf.baseName}-vep.base.txt
 
-    synonyms=${vep_dir_cache}/homo_sapiens/104_${ref_assembly}/chr_synonyms.txt
+    ${synonyms}
     rc=0
-    ${params.aim_bin} vep-annotate ${vcf.baseName}-vep.base.txt --vcf $vcf \\
-        --assembly ${ref_assembly} --threads ${task.cpus} \\
-        \$( [ -f \$synonyms ] && echo "--chr-synonyms \$synonyms" ) \\
-        ${aim_lookups} \\
-        --out ${vcf.baseName}-vep.txt || rc=\$?
-    if [ \$rc -eq 3 ]; then
+    ${aim_annotate} || rc=\$?
+    if [ \$rc -eq 3 ] && [ -n "${params.vep_store ?: ''}" ]; then
+        ${no_store_fallback}
+    elif [ \$rc -eq 3 ]; then
         echo "aim vep-annotate: unsupported input, running VEP's own lookups" >&2
         \$VEP ${vep_common} --dir_plugins ${vep_dir_plugins} ${vep_lookups} \\
             --output_file ${vcf.baseName}-vep.txt

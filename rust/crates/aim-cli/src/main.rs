@@ -236,10 +236,60 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Print the records of a tabix-indexed file overlapping chr:start-end (1-based), as htslib
-    /// would return them (for checking the reader against `tabix`)
+    /// Print the records of a tabix-indexed file (or a store built from one) overlapping
+    /// chr:start-end (1-based), as htslib would return them (for checking against `tabix`)
     #[command(hide = true)]
     Tabix { file: PathBuf, region: String },
+    /// Lookup stores: compact copies of VEP's tabix lookup files
+    Store {
+        #[command(subcommand)]
+        cmd: StoreCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum StoreCmd {
+    /// Convert a tabix-indexed lookup file (CADD, SpliceAI, dbNSFP, ...) into a store directory
+    /// (Parquet, one file per sequence). `aim vep` and `aim vep-annotate` read the directory
+    /// wherever the file is given (--plugin, --custom) and return the same records; columns left
+    /// out come back empty. Every record is read back and compared before the build finishes.
+    /// The source file is left as it is.
+    Build {
+        /// the tabix-indexed source file
+        source: PathBuf,
+        /// the new store directory (must not exist)
+        #[arg(long)]
+        out: PathBuf,
+        /// leave out a column, by its header name (e.g. CADD's RawScore); repeat for more
+        #[arg(long)]
+        drop_column: Vec<String>,
+        /// keep only these columns (besides the sequence, position and VCF REF), comma-separated
+        /// header names, e.g. the dbNSFP columns AIM reads
+        #[arg(long, value_delimiter = ',')]
+        keep_columns: Vec<String>,
+        /// SpliceAI VCFs: keep SYMBOL and the four delta scores, not the four delta positions
+        #[arg(long)]
+        drop_spliceai_positions: bool,
+        /// zstd compression level
+        #[arg(long, default_value_t = 9)]
+        zstd_level: i32,
+        /// threads, one sequence each (0: one per core)
+        #[arg(long, default_value_t = 0)]
+        threads: usize,
+    },
+    /// Compare a store with the tabix file it was built from on random regions (columns the
+    /// store left out are left out of tabix's records too); exit status 1 on any difference
+    Check {
+        /// the tabix-indexed source file
+        source: PathBuf,
+        /// the store directory
+        store: PathBuf,
+        /// random regions per sequence
+        #[arg(long, default_value_t = 10000)]
+        regions: usize,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
 }
 
 /// A plain or gzip-compressed VCF (as VEP reads either).
@@ -626,7 +676,7 @@ fn run(cli: Cli) -> Result<()> {
             let (s, e) = range
                 .split_once('-')
                 .ok_or("region must be chr:start-end")?;
-            let mut t = aim_core::tabix::Tabix::open(&file)?;
+            let mut t = aim_core::vep_store::Source::open(&file)?;
             let mut out = BufWriter::new(std::io::stdout().lock());
             if let Some(hits) = t.query(chr, s.parse()?, e.parse()?) {
                 for l in &hits.lines {
@@ -637,6 +687,64 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
             out.flush()?;
+        }
+        Command::Store {
+            cmd:
+                StoreCmd::Check {
+                    source,
+                    store,
+                    regions,
+                    seed,
+                },
+        } => {
+            let r = aim_core::vep_store::check(&source, &store, regions, seed)?;
+            eprintln!(
+                "aim store check: {} queries, {} records, {} differ; tabix {:.1} us/query, store {:.1} us/query",
+                r.queries,
+                r.records,
+                r.mismatches,
+                r.tabix_secs * 1e6 / r.queries.max(1) as f64,
+                r.store_secs * 1e6 / r.queries.max(1) as f64
+            );
+            for e in &r.examples {
+                eprintln!("  {e}");
+            }
+            if r.mismatches > 0 {
+                return Err("the store differs from its source".into());
+            }
+        }
+        Command::Store {
+            cmd:
+                StoreCmd::Build {
+                    source,
+                    out,
+                    drop_column,
+                    keep_columns,
+                    drop_spliceai_positions,
+                    zstd_level,
+                    threads,
+                },
+        } => {
+            let opts = aim_core::vep_store::BuildOptions {
+                drop_columns: drop_column,
+                keep_columns,
+                drop_spliceai_positions,
+                zstd_level: Some(zstd_level),
+                threads,
+            };
+            let built = aim_core::vep_store::build(&source, &out, &opts)?;
+            let rows: u64 = built.iter().map(|s| s.rows).sum();
+            let bytes: u64 = std::fs::read_dir(&out)?
+                .flatten()
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum();
+            eprintln!(
+                "aim store: {} sequences, {rows} records, {:.2} GiB (source {:.2} GiB)",
+                built.len(),
+                bytes as f64 / f64::from(1u32 << 30),
+                std::fs::metadata(&source)?.len() as f64 / f64::from(1u32 << 30)
+            );
         }
     }
     Ok(())

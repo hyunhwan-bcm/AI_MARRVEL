@@ -12,7 +12,7 @@
 //! ClinVar curation overwrites `curationScoreHGMD`, `omimVarFound` intersects the characters of
 //! a single rsID, and hg19 gene tables are used for hg38 too.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
@@ -467,6 +467,37 @@ const VEP_COLS: &[&str] = &[
     "SpliceAI_pred",
 ];
 
+/// The lookup columns of [`VEP_COLS`] in an hg38 VEP table (dbNSFP 4.1a's names), checked when
+/// lookup stores left columns out.
+const STORE_LOOKUP_COLS: &[&str] = &[
+    "CADD_PHRED",
+    "SpliceAI_pred",
+    "CADD_phred",
+    "GERP++_RS",
+    "GERP++_NR",
+    "LRT_Omega",
+    "LRT_score",
+    "phyloP100way_vertebrate",
+    "DANN_score",
+    "FATHMM_pred",
+    "FATHMM_score",
+    "GTEx_V8_gene",
+    "GTEx_V8_tissue",
+    "Polyphen2_HDIV_score",
+    "Polyphen2_HVAR_score",
+    "REVEL_score",
+    "SIFT_score",
+    "clinvar_clnsig",
+    "fathmm-MKL_coding_score",
+    "M-CAP_score",
+    "MutationAssessor_score",
+    "MutationTaster_score",
+    "ESP6500_AA_AC",
+    "ESP6500_AA_AF",
+    "ESP6500_EA_AC",
+    "ESP6500_EA_AF",
+];
+
 /// The 79 output columns (`load_raw_matrix`).
 pub const OUTPUT_COLS: [&str; 79] = [
     "chrom",
@@ -698,20 +729,62 @@ pub fn features(
         )
     };
 
-    // the VEP table: skip the leading "##" lines
+    // the VEP table: skip the leading "##" lines; with lookup stores, one of them gives the
+    // column count VEP writes, which sets pandas' chunk length
     let mut skip = 0usize;
+    let mut full_width: Option<usize> = None;
+    let mut width = 0usize;
     {
         let mut r = reader(vep_path)?;
         let mut line = String::new();
         while r.read_line(&mut line)? > 0 {
             if !line.starts_with("##") {
+                width = line.trim_end_matches(['\n', '\r']).split('\t').count();
                 break;
+            }
+            if let Some(rest) = line.strip_prefix(crate::vep_annotate::FULL_COLUMNS) {
+                let n = rest.split_whitespace().next().and_then(|n| n.parse().ok());
+                full_width = Some(n.ok_or_else(|| {
+                    invalid(format!(
+                        "{}: unreadable {}",
+                        vep_path.display(),
+                        line.trim()
+                    ))
+                })?);
             }
             skip += 1;
             line.clear();
         }
     }
-    let mut vep = read_table(reader(vep_path)?, '\t', skip, Some(VEP_COLS))?;
+    if let Some(full) = full_width {
+        if full < width {
+            return Err(invalid(format!(
+                "{}: {full} columns given for VEP's table, but it has {width}",
+                vep_path.display()
+            )));
+        }
+        // a table from lookup stores must still have every lookup column read here
+        let mut r = reader(vep_path)?;
+        let mut line = String::new();
+        for _ in 0..=skip {
+            line.clear();
+            r.read_line(&mut line)?;
+        }
+        let names: HashSet<&str> = line.trim_end_matches(['\n', '\r']).split('\t').collect();
+        if let Some(c) = STORE_LOOKUP_COLS.iter().find(|c| !names.contains(*c)) {
+            return Err(invalid(format!(
+                "{}: no {c} column, which AIM reads (a lookup store without it?)",
+                vep_path.display()
+            )));
+        }
+    }
+    let mut vep = crate::pdread::read_table_chunked_as(
+        reader(vep_path)?,
+        '\t',
+        skip,
+        Some(VEP_COLS),
+        full_width,
+    )?;
     // GERPpp_* / fathmm_MKL / M_CAP copies of the columns with '+' or '-' in their names
     for (from, to) in [
         ("GERP++_RS", "GERPpp_RS"),

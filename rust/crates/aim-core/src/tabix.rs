@@ -139,6 +139,54 @@ impl Tabix {
         Some(hits)
     }
 
+    /// Whether the index describes VCF records (else a generic table).
+    pub fn is_vcf(&self) -> bool {
+        matches!(self.layout.format, Format::Vcf)
+    }
+
+    /// 1-based sequence and begin column numbers, as in the index.
+    pub fn columns(&self) -> (usize, usize) {
+        (self.layout.col_seq, self.layout.col_beg)
+    }
+
+    /// Every record of `chr`, in file order, with its 0-based `[beg, end)` as a query sees it
+    /// (for converting a file, `vep_store`). Stops at the first record that does not parse or
+    /// a bad BGZF block, with an error; an unknown sequence has no records.
+    pub fn for_each_record(
+        &mut self,
+        chr: &str,
+        mut f: impl FnMut(&[u8], i64, i64) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let Some(tid) = self.layout.names.iter().position(|n| n == chr) else {
+            return Ok(());
+        };
+        let chunks = self.index.query(tid, Interval::from(Position::MIN..))?;
+        let mut query = noodles_csi::io::Query::new(&mut self.reader, chunks);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if query.read_until(b'\n', &mut line)? == 0 {
+                return Ok(());
+            }
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let Some((rtid, rbeg, rend)) = self.layout.interval_of(&line) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "failed to parse tabix record",
+                ));
+            };
+            if rtid != Some(tid) {
+                return Ok(());
+            }
+            f(&line, rbeg, rend)?;
+        }
+    }
+
     fn read(&mut self, tid: usize, beg: i64, end: i64, out: &mut Vec<String>) -> io::Result<()> {
         let pos = |p: i64| {
             Position::try_from(p as usize)

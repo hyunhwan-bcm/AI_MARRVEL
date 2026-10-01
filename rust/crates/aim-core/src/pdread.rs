@@ -421,6 +421,7 @@ fn drive(
     sep: char,
     skip_lines: usize,
     want: Option<&[&str]>,
+    chunk_width: Option<usize>,
     mut on_chunk: impl FnMut(Vec<(ChunkKind, Vec<Py>)>) -> io::Result<()>,
 ) -> io::Result<(Layout, usize)> {
     let mut line = String::new();
@@ -457,7 +458,7 @@ fn drive(
         }
     };
     // buffer_lines: the largest power of two with 2 * lines >= 2**20 // width
-    let heuristic = (1usize << 20) / width.max(1);
+    let heuristic = (1usize << 20) / chunk_width.unwrap_or(width).max(1);
     let mut chunk_rows = 1usize;
     while chunk_rows * 2 < heuristic {
         chunk_rows *= 2;
@@ -504,8 +505,20 @@ pub fn read_table(
     skip_lines: usize,
     want: Option<&[&str]>,
 ) -> io::Result<Table> {
+    read_table_chunked_as(reader, sep, skip_lines, want, None)
+}
+
+/// [`read_table`] with pandas' chunk length worked out for a table `width` columns wide (when
+/// columns pandas would have seen are not in this one).
+pub fn read_table_chunked_as(
+    reader: impl BufRead,
+    sep: char,
+    skip_lines: usize,
+    want: Option<&[&str]>,
+    width: Option<usize>,
+) -> io::Result<Table> {
     let mut chunks: Vec<Vec<(ChunkKind, Vec<Py>)>> = Vec::new();
-    let (layout, n_rows) = drive(reader, sep, skip_lines, want, |chunk| {
+    let (layout, n_rows) = drive(reader, sep, skip_lines, want, width, |chunk| {
         if chunks.is_empty() {
             chunks = vec![Vec::new(); chunk.len()];
         }
@@ -541,7 +554,7 @@ pub fn read_chunked(
     want: &[&str],
     mut on_chunk: impl FnMut(&[Vec<Py>]) -> io::Result<()>,
 ) -> io::Result<usize> {
-    let (layout, n_rows) = drive(reader, sep, skip_lines, Some(want), |chunk| {
+    let (layout, n_rows) = drive(reader, sep, skip_lines, Some(want), None, |chunk| {
         if chunk.len() != want.len() {
             return Err(invalid("missing requested columns"));
         }
@@ -592,6 +605,22 @@ mod tests {
         assert_eq!(c.kind, Kind::Object);
         assert_eq!(c.vals[0], Py::Int(1));
         assert_eq!(c.vals[8192], Py::str("1"));
+    }
+
+    #[test]
+    fn chunks_follow_the_width_given() {
+        // two of the 100 columns above, read as if all 100 were there: the same 8,192-row
+        // chunks, not the 262,144 rows two columns would give
+        let mut text = "c0\tc1\n".to_owned();
+        for r in 0..9000 {
+            text.push_str(if r == 8999 { "x\t1\n" } else { "1\t1\n" });
+        }
+        let t = read_table_chunked_as(text.as_bytes(), '\t', 0, None, Some(100)).unwrap();
+        let c = t.col("c0").unwrap();
+        assert_eq!(c.vals[0], Py::Int(1));
+        assert_eq!(c.vals[8192], Py::str("1"));
+        let t = read_table(text.as_bytes(), '\t', 0, None).unwrap();
+        assert_eq!(t.col("c0").unwrap().vals[0], Py::str("1"));
     }
 
     #[test]

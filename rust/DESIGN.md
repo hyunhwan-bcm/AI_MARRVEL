@@ -201,6 +201,19 @@ Rust port are added next to the originals, never in place of them.
   and `fixture.default_prediction.csv`). To stay bit-identical the port must either reproduce
   that parser at the same round-trip points or accept one-ulp differences (below f32 model
   resolution).
+- Decision (2026-10-01): network diffusion (`diffuse_Phrank_STRING`) is accepted as precision
+  noise rather than made bit-identical. `mod5_diffusion.py` multiplies a dense float32 matrix
+  with numpy (`nn @ (0.5 * F) + 0.5 * y`, 100 times), whose BLAS sums in a blocked, CPU-specific
+  order; the feature is `rankdata(heat, "max") / N`, so two genes whose heat is within float32
+  rounding can swap ranks. On GIAB HG002 (whole genome, 132,185 variants after FILTER_PROBAND),
+  against the seeded original: 25 variants differ, in 5 groups, by up to 2.1e-4 relative (e.g.
+  0.369506 vs 0.369585); all 4 models' predicted probabilities are identical. The original gives
+  the same result run to run on this Mac. No plain summation order reproduces its BLAS: of 400
+  rows of the matrix product, sequential float32 sums match 115, f64 rounded once (the port)
+  278, and the best of 4- to 64-lane pairwise sums with and without FMA 309. The alternative,
+  calling the same BLAS from Rust, needs the 1.4 GB dense matrix in memory and a native library,
+  and is exact only for one BLAS build, so the original itself likely differs between arm64
+  macOS and x86-64 Linux (not checked). `diffusion.rs` sums each row in f64 and rounds once.
 
 - Decision (2026-09-28): `hom` (gnomAD genome homozygote count) stays 0 on hg38, in both the
   as-deployed and corrected profiles. The hg38 file only has `nhomalt` (all samples), not the

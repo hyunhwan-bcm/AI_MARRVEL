@@ -167,3 +167,10 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - × C step 5: `--rust_vep true` (with `--rust`, hg38): ANNOTATE_BY_VEP runs `aim vep`; exit 3 falls back to VEP
   - – ClinVar sample end to end (108/108 tasks, 2 min 47 s): the 23 VEP tables identical to the VEP-based `--rust` run but SIFT/PolyPhen/DOMAINS; every other output identical as row sets but 1-ulp merge-order noise in one imputed column (two VEP-based runs differ the same way)
 - × Native runs reserve 4 GB per task (`native/native.config`): `conf/base.config`'s 25 GB ran one task at a time on a 32 GB Mac; ClinVar sample `--rust --rust_vep` 2 min 47 s → 47 s, outputs unchanged
+
+## 2026-10-01 (Thu)
+
+- × GIAB HG002 whole genome, `--rust --rust_vep` vs seeded v1.1.3: 9 min 05 s vs 17 min 47 s (unseeded 22 min 22 s); VEP tables identical but 6 `HGNC_ID` cells; predictions of all 4 models identical
+  - ! `diffuse_Phrank_STRING` differs on 25 of 132,185 variants (≤ 2.1e-4 relative): numpy's BLAS summation order, which no plain order reproduces (best 309/400 rows); near-equal heat swaps ranks
+  - o Decision: keep the Rust diffusion, documented as precision noise (DESIGN.md); calling BLAS from Rust would cost the 1.4 GB dense matrix and a native library
+- < Variant store: CADD, SpliceAI, dbNSFP, REVEL, gnomAD as Parquet (zstd) per source and chromosome, position-sorted, only the fields AIM reads (exact text); `aim store build`, `aim vep --store`, opt-in pipeline flag; gate: identical features and predictions on the ClinVar sample and HG002

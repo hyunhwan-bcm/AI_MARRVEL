@@ -136,12 +136,12 @@ Rust port are added next to the originals, never in place of them.
   (`vep_consequence.rs`). Checked against seeded VEP on 1.28 M rows (ClinVar,
   cache-sampled, `chr` names, multi-allelic, a chr17 boundary battery, MT, seq-edit and
   frameshift-intron transcripts, MNVs, intron-spanning indels and IUPAC alleles) and 23
-  chromosome tasks: all 29 columns identical but two known differences. On multi-allelic
-  indel lines VEP prints CDS_position, Protein_position and Amino_acids after another
-  allele's HGVS 3' shift (36, 36 and 22 of 156,053 rows; AIM reads Amino_acids only for
-  REVEL, which matches SNVs); and HGNC_ID for a symbol whose ID-bearing transcripts are in
-  chunks the variant does not load comes from the gene's chunks (VEP: only if its batch loads
-  them; DGCR5 is the one primary-assembly case). Known limit: VEP visits overlapping introns
+  chromosome tasks: all 29 columns identical but one known difference: HGNC_ID for a symbol
+  whose ID-bearing transcripts are in chunks the variant does not load comes from the gene's
+  chunks (VEP: only if its batch loads them; DGCR5 is the one primary-assembly case). (On
+  multi-allelic insertion lines VEP prints some of these columns from another allele's HGVS
+  shift; that is reproduced with HGVS, below.) A transcript row where no term applies gets
+  VEP's default, `intergenic_variant`. Known limit: VEP visits overlapping introns
   in its interval tree's order, which decides splice_region only next to an exon of under
   ~20 bp; the port takes transcript order. VEP 104's `mature_miRNA_variant` needs a `miRNA`
   attribute, which the cache has none of, so the miRNA column stays empty.
@@ -149,12 +149,19 @@ Rust port are added next to the originals, never in place of them.
   offline; noodles-fasta reads the bgzip with its `.fai`/`.gzi`): an insertion or deletion is
   first shifted 3' along the genome in the transcript's direction (`_genomic_shift`), then
   `hgvs_transcript` and `hgvs_protein` are ported with their helpers, the protein side on
-  `vep_codon.rs` at the shifted position. VEP's transcript-level cache matters here: after the
-  allele's shifted `codon`, the CDS coordinates stay shifted, so an insertion's reference codon
-  and the `frameshift` test that picks `fs` read them (a deletion starting in an intron becomes
-  `p.Ser2033Ter`); HGVS_OFFSET is printed only with an HGVSp; `=` is escaped as `%3D`. Checked
-  byte-identical with all transcript columns blanked and recomputed: the same 1.28 M rows and
-  23 chromosome tasks (ClinVar 17.5k: 6.2 s / 504 MB). Not yet: SIFT, PolyPhen, DOMAINS.
+  `vep_codon.rs` at the shifted position. VEP's transcript-variation cache (one per
+  transcript, shared by a variant's alleles) matters here and is modelled (`TvState`): after
+  the allele's shifted `codon` the translation and CDS coordinates and the reference peptide
+  stay at its shift, so an insertion's reference codon and the `frameshift` test that picks
+  `fs` read them (a deletion starting in an intron becomes `p.Ser2033Ter`), and on a
+  multi-allelic insertion line the next allele in VEP's order prints its CDS_position,
+  Protein_position, Amino_acids and an unshifted allele's HGVSp from them. On Y, the
+  pseudoautosomal regions are read from X as VEP does (`FastaSequence.pm` `%PARS`). HGVS_OFFSET
+  is printed only with an HGVSp; `=` is escaped as `%3D`. Checked byte-identical with all
+  transcript columns blanked and recomputed: the same 1.28 M rows and 23 chromosome tasks, and
+  the #61 review's sets (11.5 M edge, repeat, special-transcript and long-indel rows; 1.66 M
+  multi-allelic rows; a Y PAR set). ClinVar 17.5k: 5.4 s / 531 MB (a 64 kb FASTA window per
+  variant). Not yet: SIFT, PolyPhen, DOMAINS (VEP's columns; AIM reads dbNSFP's scores).
 
 - The published hg38 gnomAD genome index (`vep/hg38/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz.tbi`)
   does not match its data file (every lookup fails with "Invalid BGZF header"; a freshly built

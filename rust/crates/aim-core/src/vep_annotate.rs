@@ -2044,6 +2044,8 @@ fn annotate_variant(
             else {
                 continue;
             };
+            // the transcript variation's cache, shared by the alleles in VEP's order
+            let mut tv: Option<crate::vep_hgvs::TvState> = None;
             for ac in &tc.allele_consequences {
                 let allele = match &ac.allele {
                     fastvep_core::Allele::Sequence(s) => String::from_utf8_lossy(s).into_owned(),
@@ -2065,13 +2067,28 @@ fn annotate_variant(
                     Some(a) => vf_alleles.extend(a.iter().map(String::as_str)),
                     None => vf_alleles.extend(vf.alts.iter().map(String::as_str)),
                 }
-                let hgvs = tx.hgvs(
-                    vf,
-                    ct,
-                    &allele,
-                    crate::vep_hgvs::var_class(&vf_alleles),
-                    &coding,
-                )?;
+                let tv = tv.get_or_insert_with(|| {
+                    crate::vep_hgvs::TvState::unshifted(
+                        coding.translation,
+                        coding.cds,
+                        coding.ref_pep.clone(),
+                    )
+                });
+                let shown = crate::vep_rows::Shown::new(&coding, tv);
+                // VEP's HGVS columns are only for variants within the transcript
+                let within = vf.end >= ct.tr.start as i64 && vf.start <= ct.tr.end as i64;
+                let hgvs = if within {
+                    tx.hgvs(
+                        vf,
+                        ct,
+                        &allele,
+                        crate::vep_hgvs::var_class(&vf_alleles),
+                        &coding,
+                        tv,
+                    )?
+                } else {
+                    None
+                };
                 let row = crate::vep_rows::TranscriptAllele {
                     ct,
                     coding: &coding,
@@ -2079,6 +2096,7 @@ fn annotate_variant(
                     impact,
                     hgnc_id: near.hgnc_id(ct),
                     hgvs,
+                    shown,
                 };
                 let cols = row.columns();
                 predicted.insert((tc.transcript_id.to_string(), allele.clone()), cols);

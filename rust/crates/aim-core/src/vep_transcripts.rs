@@ -335,18 +335,27 @@ impl Transcripts {
     /// `dir` is the VEP cache directory with `info.txt` (e.g. `homo_sapiens/104_GRCh38`).
     pub fn open(dir: &Path, synonyms: Synonyms) -> io::Result<Transcripts> {
         let fasta = crate::vep_hgvs::Genome::find(dir)?;
+        let cache = Arc::new(CacheDir::open(dir)?);
         Ok(Transcripts {
-            cache: Arc::new(CacheDir::open(dir)?),
+            genome: Self::genome(fasta.as_deref(), &cache)?,
+            cache,
             synonyms,
             chunks: Arc::new(ChunkCache::new(CHUNKS_KEPT, PARSES_AT_ONCE)),
             predictor: Arc::new(ConsequencePredictor::new(FLANK as u64, FLANK as u64)),
-            genome: fasta
-                .as_deref()
-                .map(crate::vep_hgvs::Genome::open)
-                .transpose()?
-                .map(std::sync::Mutex::new),
             fasta,
         })
+    }
+
+    /// The FASTA, with the PARs of the cache's assembly (VEP's `--assembly`).
+    fn genome(
+        fasta: Option<&Path>,
+        cache: &CacheDir,
+    ) -> io::Result<Option<std::sync::Mutex<crate::vep_hgvs::Genome>>> {
+        let assembly = cache.info.get("assembly").map_or("", String::as_str);
+        Ok(fasta
+            .map(|f| crate::vep_hgvs::Genome::open(f, assembly))
+            .transpose()?
+            .map(std::sync::Mutex::new))
     }
 
     /// Another handle on the same cache (parsed chunks are shared).
@@ -356,12 +365,7 @@ impl Transcripts {
             synonyms: self.synonyms.clone(),
             chunks: self.chunks.clone(),
             predictor: self.predictor.clone(),
-            genome: self
-                .fasta
-                .as_deref()
-                .map(crate::vep_hgvs::Genome::open)
-                .transpose()?
-                .map(std::sync::Mutex::new),
+            genome: Self::genome(self.fasta.as_deref(), &self.cache)?,
             fasta: self.fasta.clone(),
         })
     }
@@ -443,6 +447,7 @@ impl Transcripts {
         allele: &str,
         var_class: &str,
         c: &crate::vep_consequence::Coding,
+        tv: &mut crate::vep_hgvs::TvState,
     ) -> io::Result<Option<crate::vep_hgvs::Hgvs>> {
         let Some(genome) = &self.genome else {
             return Ok(None);
@@ -516,11 +521,13 @@ impl Transcripts {
                 var_class,
                 shift: shift.as_ref(),
                 coding: c.coding,
+                translation: c.translation,
+                alt_pep: c.alt_pep.clone(),
                 partial_codon: c.partial_codon(),
                 stop_lost: c.stop_lost(),
                 start_lost: c.start_lost(),
             };
-            crate::vep_hgvs::hgvs_protein(&pt, &pv)
+            crate::vep_hgvs::hgvs_protein(&pt, &pv, tv)
         });
         Ok(Some(crate::vep_hgvs::Hgvs {
             c: hgvsc,

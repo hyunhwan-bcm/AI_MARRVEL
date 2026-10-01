@@ -2059,12 +2059,26 @@ fn annotate_variant(
                 );
                 let (terms, impact) =
                     crate::vep_consequence::vep104_terms(&ac.consequences, &coding);
+                // the variant's allele string (the sample's alleles with --individual)
+                let mut vf_alleles: Vec<&str> = vec![vf.ref_allele.as_str()];
+                match &vf.sample_alts {
+                    Some(a) => vf_alleles.extend(a.iter().map(String::as_str)),
+                    None => vf_alleles.extend(vf.alts.iter().map(String::as_str)),
+                }
+                let hgvs = tx.hgvs(
+                    vf,
+                    ct,
+                    &allele,
+                    crate::vep_hgvs::var_class(&vf_alleles),
+                    &coding,
+                )?;
                 let row = crate::vep_rows::TranscriptAllele {
                     ct,
                     coding: &coding,
                     terms: &terms,
                     impact,
                     hgnc_id: near.hgnc_id(ct),
+                    hgvs,
                 };
                 let cols = row.columns();
                 predicted.insert((tc.transcript_id.to_string(), allele.clone()), cols);

@@ -56,6 +56,8 @@ pub struct CachedTranscript {
     /// The codon table (`_codon_table`: 2 on MT) and the translation's sequence edits (peptide
     /// start, end, replacement), which VEP applies to the reference peptide.
     pub codon_table: u32,
+    /// The translation's stable ID and version (HGVSp's reference).
+    pub translation_id: Option<(String, Option<i64>)>,
     pub seq_edits: Vec<(i64, i64, String)>,
 }
 
@@ -241,6 +243,9 @@ fn transcript(t: &ValueRef, chr: &str) -> CachedTranscript {
             )
         })
         .collect();
+    let translation_id = field(t, "translation")
+        .filter(is_hash)
+        .and_then(|tl| Some((opt(&tl, "stable_id")?, int_field(&tl, "version"))));
     let codon_table = cached("codon_table")
         .and_then(|v| text(&v))
         .and_then(|v| v.parse().ok())
@@ -260,6 +265,7 @@ fn transcript(t: &ValueRef, chr: &str) -> CachedTranscript {
     CachedTranscript {
         db_id: int_field(t, "dbID").unwrap_or(0),
         codon_table,
+        translation_id,
         seq_edits,
         tr,
         utr5: utr5_seq,
@@ -320,16 +326,26 @@ pub struct Transcripts {
     synonyms: Synonyms,
     chunks: Arc<ChunkCache<Vec<Arc<CachedTranscript>>>>,
     predictor: Arc<ConsequencePredictor>,
+    /// The cache's FASTA (for HGVS), and this handle's reader of it.
+    fasta: Option<std::path::PathBuf>,
+    genome: Option<std::sync::Mutex<crate::vep_hgvs::Genome>>,
 }
 
 impl Transcripts {
     /// `dir` is the VEP cache directory with `info.txt` (e.g. `homo_sapiens/104_GRCh38`).
     pub fn open(dir: &Path, synonyms: Synonyms) -> io::Result<Transcripts> {
+        let fasta = crate::vep_hgvs::Genome::find(dir)?;
         Ok(Transcripts {
             cache: Arc::new(CacheDir::open(dir)?),
             synonyms,
             chunks: Arc::new(ChunkCache::new(CHUNKS_KEPT, PARSES_AT_ONCE)),
             predictor: Arc::new(ConsequencePredictor::new(FLANK as u64, FLANK as u64)),
+            genome: fasta
+                .as_deref()
+                .map(crate::vep_hgvs::Genome::open)
+                .transpose()?
+                .map(std::sync::Mutex::new),
+            fasta,
         })
     }
 
@@ -340,6 +356,13 @@ impl Transcripts {
             synonyms: self.synonyms.clone(),
             chunks: self.chunks.clone(),
             predictor: self.predictor.clone(),
+            genome: self
+                .fasta
+                .as_deref()
+                .map(crate::vep_hgvs::Genome::open)
+                .transpose()?
+                .map(std::sync::Mutex::new),
+            fasta: self.fasta.clone(),
         })
     }
 
@@ -410,6 +433,100 @@ impl Transcripts {
             transcripts: out,
             hgnc,
         })
+    }
+
+    /// VEP's `HGVSc`, `HGVSp` and HGVS offset for one allele on `ct` (None without a FASTA).
+    pub fn hgvs(
+        &self,
+        vf: &Vf,
+        ct: &CachedTranscript,
+        allele: &str,
+        var_class: &str,
+        c: &crate::vep_consequence::Coding,
+    ) -> io::Result<Option<crate::vep_hgvs::Hgvs>> {
+        let Some(genome) = &self.genome else {
+            return Ok(None);
+        };
+        let src = source_chr_name(&vf.chr, &self.cache.valid, &self.synonyms).unwrap_or_default();
+        let tr = &ct.tr;
+        let strand = if matches!(tr.strand, Strand::Reverse) {
+            -1
+        } else {
+            1
+        };
+        let mut g = genome.lock().unwrap_or_else(|e| e.into_inner());
+        // the genomic 3' shift (`_genomic_shift`), shared by HGVSc and HGVSp
+        let shiftable = crate::vep_codon::unambiguous(allele) && allele != vf.ref_allele;
+        let shift = if shiftable && (var_class == "insertion" || var_class == "deletion") {
+            Some(crate::vep_hgvs::genomic_shift(
+                &mut g,
+                &src,
+                (vf.start, vf.end),
+                &vf.ref_allele,
+                allele,
+                strand,
+            )?)
+        } else {
+            None
+        };
+        let mut exons: Vec<(i64, i64)> = tr
+            .exons
+            .iter()
+            .map(|e| (e.start as i64, e.end as i64))
+            .collect();
+        exons.sort();
+        let ht = crate::vep_hgvs::HgvsTranscript {
+            stable_id: &tr.stable_id,
+            version: tr.version,
+            chr: &src,
+            start: tr.start as i64,
+            end: tr.end as i64,
+            strand,
+            exons,
+            mapper: &ct.mapper,
+            cdna_coding_start: tr.cdna_coding_start.map(|x| x as i64),
+            cdna_coding_end: tr.cdna_coding_end.map(|x| x as i64),
+        };
+        let hgvsc = crate::vep_hgvs::hgvs_transcript(
+            &mut g,
+            &ht,
+            vf.start,
+            vf.end,
+            &vf.ref_allele,
+            allele,
+            var_class,
+            shift.as_ref(),
+            c.cds,
+            c.in_exon,
+        )?;
+        let hgvsp = ct.translation_id.as_ref().and_then(|(id, version)| {
+            let name = match version {
+                Some(v) if !id.contains('.') => format!("{id}.{v}"),
+                _ => id.clone(),
+            };
+            let pt = crate::vep_hgvs::ProteinTranscript {
+                name,
+                cds: crate::vep_codon::Cds::new(ct),
+            };
+            let pv = crate::vep_hgvs::ProteinVariant {
+                start: vf.start,
+                end: vf.end,
+                ref_allele: &vf.ref_allele,
+                allele,
+                var_class,
+                shift: shift.as_ref(),
+                coding: c.coding,
+                partial_codon: c.partial_codon(),
+                stop_lost: c.stop_lost(),
+                start_lost: c.start_lost(),
+            };
+            crate::vep_hgvs::hgvs_protein(&pt, &pv)
+        });
+        Ok(Some(crate::vep_hgvs::Hgvs {
+            c: hgvsc,
+            p: hgvsp,
+            offset: shift.map_or(0, |s| s.length),
+        }))
     }
 
     /// fastVEP's prediction for `vf`'s alternate alleles on `transcripts`.

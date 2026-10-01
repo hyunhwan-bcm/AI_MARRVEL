@@ -50,6 +50,8 @@ pub struct TranscriptAllele<'a> {
     pub impact: &'static str,
     /// The HGNC ID as VEP propagates it by symbol.
     pub hgnc_id: Option<String>,
+    /// `HGVSc`, `HGVSp` and the HGVS offset (None without the cache's FASTA).
+    pub hgvs: Option<crate::vep_hgvs::Hgvs>,
 }
 
 impl TranscriptAllele<'_> {
@@ -170,6 +172,16 @@ impl TranscriptAllele<'_> {
         out.push(("UNIPARC", ct.uniparc.clone()));
         out.push(("UNIPROT_ISOFORM", ct.uniprot_isoform.clone()));
         out.push(("GENE_PHENO", ct.gene_phenotype.then(|| "1".to_owned())));
+        // HGVS, only within the transcript; the offset only with an HGVSp (VEP's `hgvs_offset`
+        // after `hgvs_protein`), and `=` escaped
+        let h = self.hgvs.as_ref().filter(|_| within_feature);
+        let hgvsp = h.and_then(|h| h.p.as_ref()).map(|p| p.replace('=', "%3D"));
+        let offset = h
+            .filter(|h| h.offset != 0 && hgvsp.is_some())
+            .map(|h| (h.offset * strand).to_string());
+        out.push(("HGVSc", h.and_then(|h| h.c.clone())));
+        out.push(("HGVSp", hgvsp));
+        out.push(("HGVS_OFFSET", offset));
 
         // exon and intron numbers
         let exons: Vec<(i64, i64)> = tr

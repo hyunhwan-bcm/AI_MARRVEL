@@ -85,6 +85,21 @@ fn queries_match_tabix() {
 }
 
 #[test]
+fn a_store_without_a_field_a_lookup_reads_is_refused() {
+    let dir = scratch("misbuilt");
+    let opts = BuildOptions {
+        drop_columns: vec!["PHRED".into()],
+        ..BuildOptions::default()
+    };
+    build(&data().join("cadd.tsv.gz"), &dir.join("cadd.tsv.gz"), &opts).unwrap();
+    let plugins = ["CADD,cadd.tsv.gz,ALL".to_owned()];
+    let e = Lookups::open(&[], &plugins, &dir, "GRCh38", None)
+        .err()
+        .expect("refused");
+    assert!(e.to_string().contains("left out field 6"), "{e}");
+}
+
+#[test]
 fn an_unfinished_store_is_refused() {
     let dir = scratch("unfinished");
     let e = Source::open(&dir).err().expect("refused");

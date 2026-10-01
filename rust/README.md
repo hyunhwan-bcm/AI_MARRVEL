@@ -55,6 +55,11 @@ aim store build $D/dbNSFP4.1a_grch38.gz --out $S/dbNSFP4.1a_grch38.gz --keep-col
 nextflow run main.nf ... --rust true --rust_vep true --vep_store $S   # an absolute path
 ```
 
+With `--vep_store` the pipeline does not read the original CADD, SpliceAI and dbNSFP files,
+so they can be removed from the data directory. Input that `aim` does not support (structural
+variants, malformed lines), which would otherwise fall back to VEP's own lookups, then stops
+the task with a message.
+
 The VEP table then lacks the columns left out (CADD_RAW, SpliceAI's delta positions in
 SpliceAI_pred, dbNSFP's other columns) and has a `## AIM_VEP_COLUMNS=` line with the count
 VEP writes, which `aim features` needs to type the table as pandas does (rust/DESIGN.md). The

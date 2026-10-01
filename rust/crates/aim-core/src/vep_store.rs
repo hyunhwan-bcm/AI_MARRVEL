@@ -298,6 +298,16 @@ pub fn build(source: &Path, out: &Path, opts: &BuildOptions) -> io::Result<Vec<B
             source.display()
         )));
     }
+    // columns are named by their header; the lookups name them by whitespace-split headers
+    if !(opts.drop_columns.is_empty() && opts.keep_columns.is_empty()) {
+        let unique: std::collections::HashSet<&String> = names.iter().collect();
+        if unique.len() != names.len() || names.iter().any(|n| n.contains(char::is_whitespace)) {
+            return Err(invalid(format!(
+                "{}: repeated or blank-containing column names; columns cannot be left out by name",
+                source.display()
+            )));
+        }
+    }
     let index_of = |d: &String| {
         names
             .iter()
@@ -310,7 +320,7 @@ pub fn build(source: &Path, out: &Path, opts: &BuildOptions) -> io::Result<Vec<B
         let i = index_of(d)?;
         if needed(i) {
             return Err(invalid(format!(
-                "{d}: the sequence, position and REF columns are needed for queries"
+                "{d}: the sequence and position columns (and a VCF-indexed file's fourth) are needed for queries"
             )));
         }
         dropped.push(i);
@@ -1244,14 +1254,27 @@ pub fn check(source: &Path, store: &Path, n: usize, seed: u64) -> io::Result<Che
             .file(&e.name)?
             .ok_or_else(|| invalid(format!("{}: missing from the store", e.name)))?;
         let lo = f.pages[0].min_pos;
-        let hi = f.pages.last().unwrap().min_pos + 1;
-        let regions: Vec<(i64, i64)> = (0..n)
+        let last = f.pages.len() - 1;
+        let hi = f
+            .keys(last, last)?
+            .last()
+            .and_then(|k| k.pos.last().copied())
+            .unwrap_or(lo)
+            + f.max_span;
+        let mut regions: Vec<(i64, i64)> = (0..n)
             .map(|i| {
                 let start = lo + (next() % (hi - lo + 1) as u64) as i64;
                 let width = if i % 10 == 9 { 100 } else { 4 };
                 (start, start + (next() % width) as i64)
             })
             .collect();
+        // the ends, a start at or below 0, and a wide region
+        regions.extend([
+            (lo - 10, lo),
+            (-5, lo),
+            (hi - 10, hi + 10),
+            (lo, lo + 10_000),
+        ]);
         let clock = std::time::Instant::now();
         let want: Vec<_> = regions
             .iter()

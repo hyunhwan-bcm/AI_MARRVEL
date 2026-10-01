@@ -28,6 +28,20 @@ validateParameters()
 if (params.rust && !(params.rust_refs && params.rust_models)) {
     error "--rust needs --rust_refs and --rust_models (see rust/README.md)"
 }
+if (params.vep_store) {
+    if (!(params.rust && params.ref_ver == 'hg38')) {
+        error "--vep_store needs --rust on hg38 (only aim reads a lookup store)"
+    }
+    if (!params.vep_store.startsWith('/')) {
+        error "--vep_store must be an absolute path"
+    }
+    ['hg38_whole_genome_SNV.tsv.gz', 'dbNSFP4.1a_grch38.gz', 'spliceai_scores.masked.snv.hg38.vcf.gz',
+     'spliceai_scores.masked.indel.hg38.vcf.gz'].each { name ->
+        if (!file("${params.vep_store}/${name}/store.json").exists()) {
+            error "--vep_store ${params.vep_store}: no finished store ${name} (rust/README.md)"
+        }
+    }
+}
 
 workflow {
     data = PREPARE_DATA()

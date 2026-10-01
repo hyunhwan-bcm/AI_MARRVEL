@@ -494,6 +494,18 @@ pub struct Custom {
 /// The cache's `chr_synonyms.txt`, both directions (`BaseVEP::chromosome_synonyms`).
 pub(crate) type Synonyms = std::sync::Arc<HashMap<String, Vec<String>>>;
 
+/// A lookup store may leave out only fields this lookup does not read (0-based); one that left
+/// out others would turn their values into missing ones without a sign, so it is refused.
+fn check_store_fields(src: &Source, name: &str, may_lack: &[usize]) -> io::Result<()> {
+    match src.dropped().iter().find(|i| !may_lack.contains(i)) {
+        Some(i) => Err(err(format!(
+            "{name}: the lookup store left out field {} that this lookup reads",
+            i + 1
+        ))),
+        None => Ok(()),
+    }
+}
+
 pub(crate) fn read_synonyms(path: &Path) -> io::Result<HashMap<String, Vec<String>>> {
     let mut m: HashMap<String, Vec<String>> = HashMap::new();
     for line in std::fs::read_to_string(path)?.lines() {
@@ -551,6 +563,8 @@ impl Custom {
             )));
         }
         let mut tbx = Source::open(&base.join(p[0]))?;
+        // CHROM, POS, ID (the name), REF, ALT and INFO are read; QUAL and FILTER are not
+        check_store_fields(&tbx, p[0], &[5, 6])?;
         let header = tbx.header()?;
         // BaseVCF4 keeps the last ##source= value
         let source = header
@@ -874,6 +888,7 @@ impl Plugin {
             "REVEL" => {
                 let mut file =
                     PluginFile::open(params.first().ok_or_else(|| err("REVEL: no file"))?, base)?;
+                check_store_fields(&file.tbx, "REVEL", &[])?;
                 let header = file.header_columns()?;
                 let cols = header.len();
                 if !matches!(cols, 7..=9) {
@@ -890,6 +905,10 @@ impl Plugin {
                     return Err(err("SpliceAI: snv= and indel= are required"));
                 };
                 let files = vec![PluginFile::open(snv, base)?, PluginFile::open(indel, base)?];
+                // POS, REF, ALT and INFO are read; ID, QUAL and FILTER are not
+                for f in &files {
+                    check_store_fields(&f.tbx, "SpliceAI", &[2, 5, 6])?;
+                }
                 let cutoff = match kv.get("cutoff") {
                     Some(c) => {
                         let v = perl_num(c);
@@ -908,6 +927,10 @@ impl Plugin {
                     .filter(|f| f.ends_with(".gz") || base.join(f).exists())
                     .map(|f| PluginFile::open(f, base))
                     .collect::<io::Result<Vec<_>>>()?;
+                // position, Ref, Alt and PHRED are read; RawScore only for CADD_RAW
+                for f in &files {
+                    check_store_fields(&f.tbx, "CADD", &[4])?;
+                }
                 let raw = files.iter().all(|f| !f.tbx.dropped().contains(&4));
                 if !raw && files.iter().any(|f| !f.tbx.dropped().contains(&4)) {
                     return Err(err("CADD: RawScore is in some files but not others"));

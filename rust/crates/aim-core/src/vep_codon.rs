@@ -51,7 +51,7 @@ pub fn unambiguous(allele: &str) -> bool {
 }
 
 /// `seq_is_dna` (`$ALL_NUCLEOTIDES`: IUPAC codes allowed).
-fn is_dna(allele: &str) -> bool {
+pub fn is_dna(allele: &str) -> bool {
     !allele.is_empty()
         && allele
             .bytes()
@@ -228,6 +228,17 @@ impl<'a> Cds<'a> {
 
     /// `codon` at the translation coordinates `tl` (`-` for none).
     pub fn codon(&self, start: i64, end: i64, a: &Allele, tl: (i64, i64)) -> Option<String> {
+        let off = self.strand * a.shift;
+        self.codon_at(tl, self.cds(start + off, end + off), a)
+    }
+
+    /// `codon` at given translation and (VEP-cached) CDS coordinates.
+    pub fn codon_at(
+        &self,
+        tl: (i64, i64),
+        cds: (Option<i64>, Option<i64>),
+        a: &Allele,
+    ) -> Option<String> {
         let (ts, te) = tl;
         if ts == 0 || te == 0 || !is_dna(&a.vfs) {
             return None;
@@ -238,14 +249,13 @@ impl<'a> Cds<'a> {
         };
         let codon_cds_start = ts * 3 - 2;
         let codon_len = te * 3 - codon_cds_start + 1;
-        let off = self.strand * a.shift;
-        let (Some(cs), Some(ce)) = self.cds(start + off, end + off) else {
+        let (Some(cs), Some(ce)) = cds else {
             return None;
         };
         let vf_nt_len = ce - cs + 1;
         let allele_len = if a.vfs == "-" { 0 } else { a.vfs.len() as i64 };
         let cds = if allele_len != vf_nt_len {
-            self.alternate_cds(start, end, a)?
+            self.alternate_cds_at(cds, a)?
         } else {
             let t = self.translateable;
             let at = cs - 1;
@@ -318,7 +328,19 @@ impl<'a> Cds<'a> {
         tl: (i64, i64),
         codon_position: Option<i64>,
     ) -> Option<String> {
-        let mut codon = self.codon(start, end, a, tl)?.to_ascii_lowercase();
+        let off = self.strand * a.shift;
+        self.display_codon_at(tl, self.cds(start + off, end + off), a, codon_position)
+    }
+
+    /// `display_codon` at given translation and (VEP-cached) CDS coordinates.
+    pub fn display_codon_at(
+        &self,
+        tl: (i64, i64),
+        cds: (Option<i64>, Option<i64>),
+        a: &Allele,
+        codon_position: Option<i64>,
+    ) -> Option<String> {
+        let mut codon = self.codon_at(tl, cds, a)?.to_ascii_lowercase();
         let seq = self.feature_seq(&a.vfs);
         if let (Some(p), false) = (codon_position, seq == "-") {
             let (at, len) = (p - 1, seq.len() as i64);

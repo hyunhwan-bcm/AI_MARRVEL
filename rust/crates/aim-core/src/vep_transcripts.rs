@@ -358,6 +358,29 @@ impl Transcripts {
             .map(std::sync::Mutex::new))
     }
 
+    /// Whether VEP keeps a variant on `chr` (`Parser.pm` `_have_chr`): a cache chromosome or a
+    /// synonym of one, also with `chr` added or removed, or `M` when the cache has `MT`.
+    pub fn has_chr(&self, chr: &str) -> bool {
+        let valid = &self.cache.valid;
+        let known = |c: &str| {
+            valid.contains(c)
+                || valid.iter().any(|v| {
+                    self.synonyms
+                        .get(v)
+                        .is_some_and(|s| s.iter().any(|x| x == c))
+                })
+        };
+        let stripped = if chr.len() > 3 && chr[..3].eq_ignore_ascii_case("chr") {
+            &chr[3..]
+        } else {
+            chr
+        };
+        known(chr)
+            || known(&format!("chr{chr}"))
+            || known(stripped)
+            || (chr == "M" && valid.contains("MT"))
+    }
+
     /// Another handle on the same cache (parsed chunks are shared).
     pub fn try_clone(&self) -> io::Result<Transcripts> {
         Ok(Transcripts {

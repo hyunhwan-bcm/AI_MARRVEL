@@ -172,12 +172,18 @@ Rust port are added next to the originals, never in place of them.
   the recomputed Consequence, Amino_acids and SYMBOL). A sample with two alternate alleles gets
   them in `keys %non_ref` order, so `perl_hash.rs` ports seeded Perl 5.32's hash (SBOX32 up to
   24 bytes, STADTX above; checked on 3,000 random keys) and its key order (buckets from the
-  last, newest first); an unseeded VEP, as in AIM's Docker image, orders them at random.
+  last, newest first), on the alleles as written (VEP upper-cases them later); an unseeded VEP,
+  as in AIM's Docker image, orders them at random. VEP's `validate_vf` skips are reproduced
+  (chromosomes the cache and its synonyms lack, allele strings without a base, a `-` reference
+  off an insertion); input whose output depends on more of VEP's state exits 3 so the pipeline
+  runs VEP: more than five alternates in one genotype (Perl's hash splits at the sixth key and
+  VEP reuses it), duplicate sample names, malformed lines, a VCF without a #CHROM line.
   Checked whole files against seeded VEP 104 (every header line but the timestamp, the rows
   and their order, every cell but SIFT, PolyPhen and DOMAINS, which are not ported and which
   AIM does not read): ClinVar 17.5k, cache-sampled, `chr` names, multi-allelic, the chr17
   battery, intron-spanning indels, MT, the review sets of #60 and #61 (1.66 M multi-allelic
-  rows, Y PAR) and 23 per-chromosome tasks of a real exome, all identical but DGCR5's HGNC_ID.
+  rows, Y PAR, an 84,803-variant synthetic exome and the #62 review's edge cases) and 23
+  per-chromosome tasks of a real exome, all identical but DGCR5's HGNC_ID.
   Time and memory are dominated by parsing regulatory chunks (ClinVar 17.5k: 95 s / 2.4 GB on
   8 threads, VEP ~180 s; a chromosome task 1-6 s / 0.5-1.8 GB). The pipeline uses it with
   `--rust true --rust_vep true` on hg38 (opt-in; exit status 3, e.g. structural variants,

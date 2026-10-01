@@ -93,6 +93,10 @@
           "type": "boolean",
           "description": "Run PHRANK_SCORING, HPO_SIM, ANNOTATE_BY_MODULES, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION with the Rust `aim` binary (see rust/README.md)."
         },
+        "rust_vep": {
+          "type": "boolean",
+          "description": "With --rust on hg38: run `aim vep` instead of VEP in ANNOTATE_BY_VEP (rows, consequences, HGVS, known variants and regulatory rows from the VEP cache; VEP's SIFT/PolyPhen/DOMAINS columns stay empty). Input it does not reproduce falls back to VEP."
+        },
         "aim_bin": {
           "type": "string",
           "description": "Path to the Rust `aim` binary (with --rust)."

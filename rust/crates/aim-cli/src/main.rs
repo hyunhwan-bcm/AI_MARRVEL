@@ -206,8 +206,8 @@ enum Command {
     },
     /// VEP 104.3 with AIM's options (--everything --individual all --tab, --af_gnomad) from the
     /// VCF and the VEP cache alone: rows, transcript columns and HGVS, known variants,
-    /// regulatory and motif rows, then --custom and --plugin as vep-annotate; for checking
-    /// against VEP, not yet for the pipeline
+    /// regulatory and motif rows, then --custom and --plugin as vep-annotate (the pipeline's
+    /// ANNOTATE_BY_VEP with --rust_vep; exit status 3 on input it does not reproduce)
     #[command(hide = true)]
     Vep {
         /// the input VCF (plain or gzip)
@@ -608,7 +608,13 @@ fn run(cli: Cli) -> Result<()> {
                 threads,
                 &mut w,
             );
-            let generated = skeleton.join().map_err(|_| "skeleton thread panicked")?;
+            // a panic is a bug, but VEP can still do the task: exit status 3 as unsupported input
+            let generated = skeleton.join().unwrap_or_else(|_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "aim vep: the row generator failed",
+                ))
+            });
             annotated?;
             generated?;
             w.flush()?;

@@ -85,6 +85,13 @@ fn queries_match_tabix() {
 }
 
 #[test]
+fn an_unfinished_store_is_refused() {
+    let dir = scratch("unfinished");
+    let e = Source::open(&dir).err().expect("refused");
+    assert!(e.to_string().contains("not a finished lookup store"), "{e}");
+}
+
+#[test]
 fn a_store_is_never_overwritten() {
     let dir = scratch("overwrite");
     let out = dir.join("cadd");

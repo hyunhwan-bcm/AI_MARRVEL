@@ -1083,21 +1083,23 @@ impl StoreSource {
     }
 
     /// As [`Tabix::query`]: the records overlapping `chr:start-end` (1-based, inclusive), or
-    /// None for an unknown sequence or an empty region.
+    /// None for an unknown sequence or an empty region. A store that cannot be read stops the
+    /// program: the lookups treat a tabix read error as no records, as VEP does, which for a
+    /// store would change results without a sign.
     pub fn query(&mut self, chr: &str, start: i64, end: i64) -> Option<Hits> {
         self.m.seqnames.iter().position(|n| n == chr)?;
         let beg = (start - 1).max(0);
         if end <= beg {
             return None;
         }
-        let mut hits = Hits {
-            lines: Vec::new(),
-            error: None,
-        };
-        if let Err(e) = self.read(chr, beg, end, &mut hits.lines) {
-            hits.error = Some(e.to_string());
+        let mut lines = Vec::new();
+        if let Err(e) = self.read(chr, beg, end, &mut lines) {
+            panic!(
+                "lookup store {} unreadable at {chr}:{start}-{end}: {e}",
+                self.dir.display()
+            );
         }
-        Some(hits)
+        Some(Hits { lines, error: None })
     }
 
     /// Records with a 0-based `[pos - 1, pos - 1 + span)` overlapping `[beg, end)`.
@@ -1159,6 +1161,11 @@ impl Source {
     pub fn open(path: &Path) -> io::Result<Source> {
         if path.join(MANIFEST).is_file() {
             Ok(Source::Store(StoreSource::open(path)?))
+        } else if path.is_dir() {
+            Err(invalid(format!(
+                "{}: a directory without {MANIFEST}: not a finished lookup store",
+                path.display()
+            )))
         } else {
             Ok(Source::Tabix(Tabix::open(path)?))
         }

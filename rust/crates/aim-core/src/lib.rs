@@ -24,6 +24,7 @@ pub mod vep_cache;
 pub mod vep_codon;
 pub mod vep_consequence;
 pub mod vep_existing;
+pub mod vep_hgvs;
 pub mod vep_mapper;
 pub mod vep_regulatory;
 pub mod vep_rows;

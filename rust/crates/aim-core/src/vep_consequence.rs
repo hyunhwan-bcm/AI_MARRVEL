@@ -531,7 +531,7 @@ impl Coding<'_> {
         };
         Some((dash(r), dash(a)))
     }
-    fn partial_codon(&self) -> bool {
+    pub fn partial_codon(&self) -> bool {
         let Some(ts) = self.translation.0 else {
             return false;
         };
@@ -540,7 +540,7 @@ impl Coding<'_> {
         let last = cds_length - (codon_cds_start - 1);
         last < 3 && last > 0
     }
-    fn frameshift(&self) -> bool {
+    pub fn frameshift(&self) -> bool {
         if self.partial_codon() {
             return false;
         }
@@ -671,7 +671,7 @@ impl Coding<'_> {
             && self.overlaps_start_codon()
             && !self.ins_del_start_altered()
     }
-    fn start_lost(&self) -> bool {
+    pub fn start_lost(&self) -> bool {
         if !self.overlaps_start_codon() {
             return false;
         }
@@ -747,7 +747,7 @@ impl Coding<'_> {
         };
         a.contains('*') && !r.contains('*')
     }
-    fn stop_lost(&self) -> bool {
+    pub fn stop_lost(&self) -> bool {
         match self.peptides() {
             Some((r, a)) => !a.contains('*') && r.contains('*'),
             None => self.ins_del_stop_altered(),

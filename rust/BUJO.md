@@ -151,4 +151,8 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - × Ported `codon`/`peptide`/`_get_alternate_cds`/`display_codon` (BioPerl translation, seq edits, codon tables) and `_intron_effects`; fastVEP now gives only up/downstream and NMD terms
   - – all 29 columns identical on 1.28 M rows (review sets included) and 23 chromosome tasks, but the two known differences; ClinVar 17.5k in 5.3 s / 454 MB
 - • C step 4b: HGVSc/HGVSp (VEP's genomic 3' shift, cache FASTA), SIFT/PolyPhen, DOMAINS, miRNA
+  - × HGVSc + HGVSp + HGVS_OFFSET ported (shift, notation, protein type/peptides/format on VEP's codons): identical on 1.28 M rows and 23 chromosome tasks
+  - ! VEP's cached CDS coordinates stay shifted after the allele's codon: the reference codon of an insertion at the start codon and `frameshift` read them (2 ClinVar variants, 13 rows)
+  - – miRNA: needs a `miRNA` attribute the cache lacks, so always empty (as VEP)
+  - • SIFT/PolyPhen (cache ProteinFunctionPredictionMatrix), DOMAINS (protein_features)
 - • C step 4c: whole rows from the VCF (`aim vep`): variant columns, intergenic rows, header

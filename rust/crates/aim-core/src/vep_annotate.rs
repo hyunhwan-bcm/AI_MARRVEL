@@ -1493,8 +1493,7 @@ pub struct Lookups {
     known: Option<crate::vep_existing::KnownVariants>,
     /// Regenerates VEP's regulatory and motif rows (see [`crate::vep_regulatory`]).
     regulatory: Option<crate::vep_regulatory::Regulatory>,
-    /// Recomputes the transcript rows' consequences with fastVEP (see
-    /// [`crate::vep_transcripts`]).
+    /// Recomputes the transcript rows' columns (see [`crate::vep_transcripts`]).
     transcripts: Option<crate::vep_transcripts::Transcripts>,
     synonyms: Synonyms,
     /// Whether `synonyms` came from the caller (else the VEP cache's file is used, as VEP does).
@@ -1567,8 +1566,9 @@ impl Lookups {
         Ok(self)
     }
 
-    /// Also recomputes the transcript rows' `Consequence` and `IMPACT` with fastVEP on the
-    /// transcripts of the VEP cache directory `cache`.
+    /// Also recomputes the transcript rows' 29 transcript columns (Consequence, IMPACT,
+    /// positions, codons, gene and transcript fields) from the transcripts of the VEP cache
+    /// directory `cache`.
     pub fn with_transcripts(mut self, cache: &Path) -> io::Result<Lookups> {
         let synonyms = self.cache_synonyms(cache)?;
         self.transcripts = Some(crate::vep_transcripts::Transcripts::open(cache, synonyms)?);
@@ -2025,7 +2025,7 @@ fn annotate_variant(
         }
         None => None,
     };
-    // (transcript, allele) -> the transcript row's columns, recomputed with fastVEP
+    // (transcript, allele) -> the transcript row's columns, recomputed
     let mut predicted: HashMap<(String, String), crate::vep_rows::Columns> = HashMap::new();
     if let Some(tx) = lookups.transcripts.as_ref() {
         let mut alts: Vec<&str> = Vec::new();
@@ -2050,28 +2050,20 @@ fn annotate_variant(
                     fastvep_core::Allele::Deletion => "-".to_owned(),
                     other => format!("{other:?}"),
                 };
-                let upper = |p: &Option<(String, String)>| {
-                    p.as_ref()
-                        .map(|(a, b)| (a.to_ascii_uppercase(), b.to_ascii_uppercase()))
-                };
                 let coding = crate::vep_consequence::Coding::new(
                     ct,
                     vf.start,
                     vf.end,
                     &vf.ref_allele,
                     &allele,
-                    upper(&ac.codons),
-                    ac.amino_acids.clone(),
                 );
                 let (terms, impact) =
-                    crate::vep_consequence::vep104_with_coding(&ac.consequences, &coding);
+                    crate::vep_consequence::vep104_terms(&ac.consequences, &coding);
                 let row = crate::vep_rows::TranscriptAllele {
                     ct,
                     coding: &coding,
                     terms: &terms,
                     impact,
-                    codons: ac.codons.clone(),
-                    amino_acids: ac.amino_acids.clone(),
                     hgnc_id: near.hgnc_id(ct),
                 };
                 let cols = row.columns();

@@ -64,13 +64,13 @@ so the lookups parse them unchanged. The lookups accept a store directory wherev
 given. A build can leave fields out; the store returns them empty, and the lookups then omit
 what they would fill. For hg38 the pipeline (`--vep_store`) uses stores that keep what AIM reads:
 
-| Source | Original | Store | Left out |
-|---|---|---|---|
-| CADD | 80.6 GiB | 23.6 GiB | RawScore (CADD_RAW) |
-| SpliceAI SNV | 26.6 GiB | 2.01 GiB | DP_AG..DP_DL (SpliceAI_pred keeps SYMBOL and DS_*); ALLELE is stored only when not ALT |
-| SpliceAI indel | 64.1 GiB | 7.13 GiB | the same |
-| dbNSFP 4.1a | 30.5 GiB | 3.50 GiB | 338 of 367 columns (kept: the 24 AIM reads and `chr`, `pos(1-based)`, `alt`, `aaref`, `aaalt`) |
-| **Total** | **202 GiB** | **36.3 GiB** | (build: 54 min on 12 threads; every file read back and compared) |
+| Source         | Original    | Store        | Left out                                                                                                                            |
+| -------------- | ----------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| CADD           | 80.6 GiB    | 23.6 GiB     | RawScore (CADD_RAW)                                                                                                                 |
+| SpliceAI SNV   | 26.6 GiB    | 2.01 GiB     | the four delta positions (`SpliceAI_pred` keeps the symbol and the four delta scores); the allele is stored only when it is not ALT |
+| SpliceAI indel | 64.1 GiB    | 7.13 GiB     | the same                                                                                                                            |
+| dbNSFP 4.1a    | 30.5 GiB    | 3.50 GiB     | 338 of 367 columns (kept: the 24 AIM reads and `chr`, `pos(1-based)`, `alt`, `aaref`, `aaalt`)                                      |
+| **Total**      | **202 GiB** | **36.3 GiB** | (build: 54 min on 12 threads; every file read back and compared)                                                                    |
 
 Checked: on chr21 of each source, 20,000 random regions return the same records as tabix; the
 ClinVar sample and HG002 (whole genome) with `--vep_store` give the same `scores.txt` and the

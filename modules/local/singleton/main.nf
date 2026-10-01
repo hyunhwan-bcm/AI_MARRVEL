@@ -509,7 +509,23 @@ process ANNOTATE_BY_VEP {
     n=\$(gzip -cdf $vcf | grep -vc '^#' || true)
     bs=\$(( n < 50 ? 50 : n ))
     bs=\$(( bs > ${params.vep_buffer_size} ? ${params.vep_buffer_size} : bs ))"""
-    if (params.rust && params.ref_ver == 'hg38')
+    if (params.rust && params.rust_vep && params.ref_ver == 'hg38')
+    """
+    ${vep_setup}
+    rc=0
+    ${params.aim_bin} vep --vcf $vcf --cache ${vep_dir_cache}/homo_sapiens/104_${ref_assembly} \\
+        --assembly ${ref_assembly} --threads ${task.cpus} \\
+        ${vep_lookups} \\
+        --out ${vcf.baseName}-vep.txt || rc=\$?
+    if [ \$rc -eq 3 ]; then
+        echo "aim vep: unsupported input, running VEP" >&2
+        \${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep} ${vep_common} --dir_plugins ${vep_dir_plugins} \\
+            ${vep_lookups} --output_file ${vcf.baseName}-vep.txt
+    elif [ \$rc -ne 0 ]; then
+        exit \$rc
+    fi
+    """
+    else if (params.rust && params.ref_ver == 'hg38')
     """
     ${vep_setup}
     VEP=\${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep}

@@ -204,10 +204,79 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// VEP 104.3 with AIM's options (--everything --individual all --tab, --af_gnomad) from the
+    /// VCF and the VEP cache alone: rows, transcript columns and HGVS, known variants,
+    /// regulatory and motif rows, then --custom and --plugin as vep-annotate; for checking
+    /// against VEP, not yet for the pipeline
+    #[command(hide = true)]
+    Vep {
+        /// the input VCF (plain or gzip)
+        #[arg(long)]
+        vcf: PathBuf,
+        /// the VEP cache for the assembly (e.g. <dir_cache>/homo_sapiens/104_GRCh38)
+        #[arg(long)]
+        cache: PathBuf,
+        /// as VEP's --custom (file,short,vcf,exact,0,FIELDS...); repeat in VEP's order
+        #[arg(long)]
+        custom: Vec<String>,
+        /// as VEP's --plugin; repeat in VEP's order
+        #[arg(long)]
+        plugin: Vec<String>,
+        #[arg(long, default_value = "GRCh38")]
+        assembly: String,
+        /// chr_synonyms.txt (default: the cache's)
+        #[arg(long)]
+        chr_synonyms: Option<PathBuf>,
+        /// the directory relative lookup paths are resolved against
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// worker threads (0: one per core)
+        #[arg(long, default_value_t = 0)]
+        threads: usize,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print the records of a tabix-indexed file overlapping chr:start-end (1-based), as htslib
     /// would return them (for checking the reader against `tabix`)
     #[command(hide = true)]
     Tabix { file: PathBuf, region: String },
+}
+
+/// A plain or gzip-compressed VCF (as VEP reads either).
+fn open_vcf(path: &Path) -> std::io::Result<Box<dyn std::io::BufRead + Send>> {
+    let mut f = std::io::BufReader::new(File::open(path)?);
+    let gz = std::io::BufRead::fill_buf(&mut f)?.starts_with(&[0x1f, 0x8b]);
+    Ok(if gz {
+        Box::new(std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            f,
+        )))
+    } else {
+        Box::new(f)
+    })
+}
+
+/// The current time as VEP's header prints it (`%Y-%m-%d %H:%M:%S`; UTC here, VEP's is local).
+fn utc_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs()) as i64;
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    // civil date from days since 1970-01-01 (Howard Hinnant's algorithm)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 fn write_text(path: &Path, text: &str) -> Result<()> {
@@ -480,23 +549,68 @@ fn run(cli: Cli) -> Result<()> {
                 lookups = lookups.with_transcripts(cache)?;
             }
             let mut w = BufWriter::new(File::create(&out)?);
-            // VEP reads plain or gzip-compressed VCF
-            let mut f = std::io::BufReader::new(File::open(&vcf)?);
-            let gz = std::io::BufRead::fill_buf(&mut f)?.starts_with(&[0x1f, 0x8b]);
-            let vcf: Box<dyn std::io::BufRead> = if gz {
-                Box::new(std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
-                    f,
-                )))
-            } else {
-                Box::new(f)
-            };
             aim_core::vep_annotate::annotate(
                 std::io::BufReader::new(File::open(&vep)?),
-                vcf,
+                open_vcf(&vcf)?,
                 &lookups,
                 threads,
                 &mut w,
             )?;
+            w.flush()?;
+        }
+        Command::Vep {
+            vcf,
+            cache,
+            custom,
+            plugin,
+            assembly,
+            chr_synonyms,
+            dir,
+            threads,
+            out,
+        } => {
+            // VEP reads the cache's chr_synonyms.txt, for the custom files too
+            let synonyms = chr_synonyms
+                .or_else(|| Some(cache.join("chr_synonyms.txt")).filter(|p| p.exists()));
+            let lookups = aim_core::vep_annotate::Lookups::open(
+                &custom,
+                &plugin,
+                &dir,
+                &assembly,
+                synonyms.as_deref(),
+            )?
+            .with_known_variants(&cache)?
+            .with_regulatory(&cache)?
+            .with_transcripts(&cache)?;
+            let tx = lookups
+                .transcripts()
+                .ok_or("no transcripts lookup")?
+                .try_clone()?;
+            // the skeleton rows stream through a pipe into the lookups
+            let (reader, writer) = std::io::pipe()?;
+            let (skel_vcf, skel_cache) = (vcf.clone(), cache.clone());
+            let skeleton = std::thread::spawn(move || -> std::io::Result<()> {
+                let mut w = BufWriter::new(writer);
+                aim_core::vep_skeleton::write(
+                    open_vcf(&skel_vcf)?,
+                    &tx,
+                    &skel_cache,
+                    &utc_now(),
+                    &mut w,
+                )?;
+                w.flush()
+            });
+            let mut w = BufWriter::new(File::create(&out)?);
+            let annotated = aim_core::vep_annotate::annotate(
+                std::io::BufReader::new(reader),
+                open_vcf(&vcf)?,
+                &lookups,
+                threads,
+                &mut w,
+            );
+            let generated = skeleton.join().map_err(|_| "skeleton thread panicked")?;
+            annotated?;
+            generated?;
             w.flush()?;
         }
         Command::Tabix { file, region } => {

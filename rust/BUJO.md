@@ -157,4 +157,10 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - × Modelled the cache across alleles (`TvState`), PARs, default term, 64 kb FASTA window: 1.66 M multi-allelic rows identical, the quirk gone; ClinVar CPU 44 → 24 s
   - – miRNA: needs a `miRNA` attribute the cache lacks, so always empty (as VEP)
   - • SIFT/PolyPhen (cache ProteinFunctionPredictionMatrix), DOMAINS (protein_features): deferred, AIM reads dbNSFP's scores, not these columns
-- • C step 4c: whole rows from the VCF (`aim vep`): variant columns, intergenic rows, header
+- × C step 4c: whole rows from the VCF (`aim vep`): skeleton rows (samples, transcripts within 5 kb, intergenic) streamed into the lookups; VEP 104.3 header
+  - ! a sample's two alternate alleles come in Perl hash order (`keys %non_ref`): ported seeded Perl 5.32's SBOX32/STADTX hash and key order (3,000 random keys identical)
+  - ! the plugins read the input's Consequence/Amino_acids/SYMBOL: now the recomputed ones
+  - – whole files identical to seeded VEP on every set (ClinVar, cache-sampled, chr, multi, chr17 battery, g2s, MT, #60/#61 review sets, 23 exome chromosome tasks) but DGCR5 HGNC_ID; SIFT/PolyPhen/DOMAINS empty
+  - – ClinVar 17.5k 95 s / 2.4 GB (regulatory chunk parsing dominates); exome chromosome task 1-6 s
+- × C step 5: `--rust_vep true` (with `--rust`, hg38): ANNOTATE_BY_VEP runs `aim vep`; exit 3 falls back to VEP
+  - – ClinVar sample end to end (108/108 tasks, 2 min 47 s): the 23 VEP tables identical to the VEP-based `--rust` run but SIFT/PolyPhen/DOMAINS; every other output identical as row sets but 1-ulp merge-order noise in one imputed column (two VEP-based runs differ the same way)

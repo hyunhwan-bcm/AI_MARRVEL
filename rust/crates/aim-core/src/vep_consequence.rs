@@ -44,6 +44,7 @@ pub const VEP104_TERMS: &[(&str, u32, &str)] = &[
     ("feature_elongation", 36, "MODIFIER"),
     ("regulatory_region_variant", 36, "MODIFIER"),
     ("feature_truncation", 37, "MODIFIER"),
+    ("intergenic_variant", 38, "MODIFIER"),
     ("sequence_variant", 39, "MODIFIER"),
 ];
 
@@ -75,14 +76,13 @@ pub struct Coding<'a> {
     pub cds: (Option<i64>, Option<i64>),
     pub translation: (Option<i64>, Option<i64>),
     /// VEP's codons and peptides of the reference and this allele (`codon`, `peptide`: `-`
-    /// for none), and the Codons and Amino_acids columns (`display_codon_allele_string`,
-    /// `pep_allele_string`).
+    /// for none), and the Codons column (`display_codon_allele_string`; Amino_acids is
+    /// [`crate::vep_rows::Shown`]'s).
     pub ref_codon: Option<String>,
     pub alt_codon: Option<String>,
     pub ref_pep: Option<String>,
     pub alt_pep: Option<String>,
     pub display_codons: Option<String>,
-    pub amino_acids: Option<String>,
     /// VEP's `coding` pre-predicate (`_bvfo_preds`: a lone Gap in CDS coordinates counts) and
     /// `within_cds`.
     pub coding: bool,
@@ -320,14 +320,6 @@ impl<'a> Coding<'a> {
         };
         let display_codons =
             display(&alt).and_then(|a| display(&reference).map(|r| format!("{r}/{a}")));
-        let amino_acids = match (&ref_pep, &alt_pep) {
-            (Some(r), Some(a)) if truthy(r) && truthy(a) => Some(if r != a {
-                format!("{r}/{a}")
-            } else {
-                a.clone()
-            }),
-            _ => None,
-        };
         let utr = within_feature
             && coding_region
                 .is_some_and(|(a, b)| !overlap(min_vf, max_vf, a, b) || min_vf < a || max_vf > b);
@@ -347,7 +339,6 @@ impl<'a> Coding<'a> {
             ref_pep,
             alt_pep,
             display_codons,
-            amino_acids,
             coding,
             within_cds,
             within_cdna,
@@ -892,8 +883,9 @@ pub fn vep104_terms(fastvep: &[Consequence], c: &Coding) -> (Vec<&'static str>, 
     out.extend(coding_terms(c));
     out.extend(c.transcript_terms());
     out.dedup();
+    // `$DEFAULT_OVERLAP_CONSEQUENCE`
     if out.is_empty() {
-        out.push("sequence_variant");
+        out.push("intergenic_variant");
     }
     out.sort_by_key(|t| term(t).map_or(u32::MAX, |(r, _)| r));
     let impact = out

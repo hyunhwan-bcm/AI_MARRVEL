@@ -52,6 +52,40 @@ pub struct TranscriptAllele<'a> {
     pub hgnc_id: Option<String>,
     /// `HGVSc`, `HGVSp` and the HGVS offset (None without the cache's FASTA).
     pub hgvs: Option<crate::vep_hgvs::Hgvs>,
+    /// CDS_position, Protein_position and Amino_acids as VEP prints them: from the transcript
+    /// variation's cache, which an earlier allele's HGVS shift may have moved.
+    pub shown: Shown,
+}
+
+/// The cached values a row prints (see [`crate::vep_hgvs::TvState`]).
+pub struct Shown {
+    pub cds: (Option<i64>, Option<i64>),
+    pub translation: (Option<i64>, Option<i64>),
+    pub amino_acids: Option<String>,
+}
+
+impl Shown {
+    /// What allele `c` prints with the transcript variation's cache `tv` (read before its HGVS).
+    pub fn new(c: &Coding, tv: &crate::vep_hgvs::TvState) -> Shown {
+        let truthy = |s: &&String| !s.is_empty() && *s != "0";
+        // `pep_allele_string`: its own peptide, the reference's as cached
+        let amino_acids = match (
+            c.alt_pep.as_ref().filter(truthy),
+            tv.ref_pep.as_ref().filter(truthy),
+        ) {
+            (Some(a), Some(r)) => Some(if r != a {
+                format!("{r}/{a}")
+            } else {
+                a.clone()
+            }),
+            _ => None,
+        };
+        Shown {
+            cds: tv.cds,
+            translation: tv.translation.unwrap_or(c.translation),
+            amino_acids,
+        }
+    }
 }
 
 impl TranscriptAllele<'_> {
@@ -87,10 +121,10 @@ impl TranscriptAllele<'_> {
         if within_feature && c.in_exon {
             cdna = format_coords(c.cdna.0, c.cdna.1);
             if c.coding {
-                aa = c.amino_acids.clone();
+                aa = self.shown.amino_acids.clone();
                 codons = c.display_codons.clone();
-                cds = format_coords(c.cds.0, c.cds.1);
-                prot = format_coords(c.translation.0, c.translation.1);
+                cds = format_coords(self.shown.cds.0, self.shown.cds.1);
+                prot = format_coords(self.shown.translation.0, self.shown.translation.1);
             }
         }
         out.push(("cDNA_position", cdna));

@@ -153,6 +153,8 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
 - • C step 4b: HGVSc/HGVSp (VEP's genomic 3' shift, cache FASTA), SIFT/PolyPhen, DOMAINS, miRNA
   - × HGVSc + HGVSp + HGVS_OFFSET ported (shift, notation, protein type/peptides/format on VEP's codons): identical on 1.28 M rows and 23 chromosome tasks
   - ! VEP's cached CDS coordinates stay shifted after the allele's codon: the reference codon of an insertion at the start codon and `frameshift` read them (2 ClinVar variants, 13 rows)
+  - ! Review of #61 (11.5 M fuzz rows identical): VEP's per-transcript cache carries one allele's HGVS shift to the next (multi-allelic insertions: HGVSp, and the CDS/Protein_position/Amino_acids quirk); Y PAR sequence comes from X; the default term is intergenic_variant; FASTA blocks decompressed per call
+  - × Modelled the cache across alleles (`TvState`), PARs, default term, 64 kb FASTA window: 1.66 M multi-allelic rows identical, the quirk gone; ClinVar CPU 44 → 24 s
   - – miRNA: needs a `miRNA` attribute the cache lacks, so always empty (as VEP)
-  - • SIFT/PolyPhen (cache ProteinFunctionPredictionMatrix), DOMAINS (protein_features)
+  - • SIFT/PolyPhen (cache ProteinFunctionPredictionMatrix), DOMAINS (protein_features): deferred, AIM reads dbNSFP's scores, not these columns
 - • C step 4c: whole rows from the VCF (`aim vep`): variant columns, intergenic rows, header

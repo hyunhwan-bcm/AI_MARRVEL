@@ -21,10 +21,28 @@ pub struct Genome {
     /// Plain or bgzip (with `.gzi`) FASTA, as noodles' builder opens it.
     reader: noodles_fasta::io::IndexedReader<noodles_fasta::io::BufReader<std::fs::File>>,
     lengths: std::collections::HashMap<String, i64>,
+    /// VEP's pseudoautosomal regions for the assembly (`FastaSequence.pm` `%PARS`): Y start,
+    /// end, and the offset to its X coordinates; Y sequence there is read from X.
+    pars: &'static [(i64, i64, i64)],
+    /// The last window read (chromosome, start, upper-case bases).
+    window: Option<(String, i64, String)>,
+}
+
+/// Bases read around a request, so a variant's shift and notations share one read.
+const WINDOW: i64 = 32_768;
+
+/// `%PARS` of `FastaSequence.pm`.
+fn pars(assembly: &str) -> &'static [(i64, i64, i64)] {
+    match assembly {
+        "GRCh38" => &[(10_001, 2_781_479, 0), (56_887_903, 57_217_415, 98_813_480)],
+        "GRCh37" => &[(60_001, 2_699_520, 0), (59_034_050, 59_363_566, 95_830_000)],
+        _ => &[],
+    }
 }
 
 impl Genome {
-    pub fn open(path: &Path) -> io::Result<Genome> {
+    /// The FASTA at `path`, for the cache's `assembly` (which decides the PARs).
+    pub fn open(path: &Path, assembly: &str) -> io::Result<Genome> {
         let reader = noodles_fasta::io::indexed_reader::Builder::default().build_from_path(path)?;
         let lengths = reader
             .index()
@@ -37,7 +55,12 @@ impl Genome {
                 )
             })
             .collect();
-        Ok(Genome { reader, lengths })
+        Ok(Genome {
+            reader,
+            lengths,
+            pars: pars(assembly),
+            window: None,
+        })
     }
 
     /// The FASTA in a cache directory, if there is one (`CacheDir.pm`: the first `*.fa` or
@@ -56,8 +79,31 @@ impl Genome {
         self.lengths.get(chr).copied()
     }
 
-    /// Bases `start..=end` (1-based) of `chr`, clipped to the sequence, upper case.
+    /// Bases `start..=end` (1-based) of `chr`, clipped to the sequence, upper case; on Y, a
+    /// pseudoautosomal region's part comes from X (the first region the request overlaps).
     pub fn seq(&mut self, chr: &str, start: i64, end: i64) -> io::Result<String> {
+        if chr == "Y" {
+            if let Some(&(ps, pe, adj)) = self
+                .pars
+                .iter()
+                .find(|(ps, pe, _)| end >= *ps && start <= *pe)
+            {
+                let mut out = String::new();
+                if start < ps {
+                    out.push_str(&self.raw(chr, start, ps - 1)?);
+                }
+                out.push_str(&self.raw("X", start.max(ps) + adj, end.min(pe) + adj)?);
+                if end > pe {
+                    out.push_str(&self.raw(chr, pe + 1, end)?);
+                }
+                return Ok(out);
+            }
+        }
+        self.raw(chr, start, end)
+    }
+
+    /// Bases `start..=end` of `chr` as stored, through the window.
+    fn raw(&mut self, chr: &str, start: i64, end: i64) -> io::Result<String> {
         let Some(len) = self.len(chr) else {
             return Ok(String::new());
         };
@@ -65,13 +111,20 @@ impl Genome {
         if e < s {
             return Ok(String::new());
         }
-        let pos = |p: i64| {
-            noodles_core::Position::try_from(p as usize)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
-        };
-        let region = noodles_core::Region::new(chr, pos(s)?..=pos(e)?);
-        let rec = self.reader.query(&region)?;
-        Ok(String::from_utf8_lossy(rec.sequence().as_ref()).to_ascii_uppercase())
+        let hit = |w: &(String, i64, String)| w.0 == chr && s >= w.1 && e < w.1 + w.2.len() as i64;
+        if !self.window.as_ref().is_some_and(hit) {
+            let (ws, we) = ((s - WINDOW).max(1), (e + WINDOW).min(len));
+            let pos = |p: i64| {
+                noodles_core::Position::try_from(p as usize)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+            };
+            let region = noodles_core::Region::new(chr, pos(ws)?..=pos(we)?);
+            let rec = self.reader.query(&region)?;
+            let bases = String::from_utf8_lossy(rec.sequence().as_ref()).to_ascii_uppercase();
+            self.window = Some((chr.to_owned(), ws, bases));
+        }
+        let w = self.window.as_ref().unwrap();
+        Ok(w.2[(s - w.1) as usize..=(e - w.1) as usize].to_owned())
     }
 }
 
@@ -103,6 +156,33 @@ pub fn var_class(alleles: &[&str]) -> &'static str {
         }
     }
     "sequence alteration"
+}
+
+/// What VEP's transcript variation (shared by a variant's alleles on one transcript) caches
+/// between them: the translation and CDS coordinates and the reference peptide. They start
+/// unshifted; an allele with a 3' shift leaves them at its shift for the alleles after it, whose
+/// Protein_position, CDS_position, Amino_acids and HGVSp then read them.
+#[derive(Debug, Clone)]
+pub struct TvState {
+    /// None once deleted (read again unshifted).
+    pub translation: Option<(Option<i64>, Option<i64>)>,
+    pub cds: (Option<i64>, Option<i64>),
+    pub ref_pep: Option<String>,
+}
+
+impl TvState {
+    /// The state before any allele's HGVS.
+    pub fn unshifted(
+        translation: (Option<i64>, Option<i64>),
+        cds: (Option<i64>, Option<i64>),
+        ref_pep: Option<String>,
+    ) -> TvState {
+        TvState {
+            translation: Some(translation),
+            cds,
+            ref_pep,
+        }
+    }
 }
 
 /// One allele's HGVS columns: `HGVSc`, `HGVSp` (unescaped) and the HGVS offset (the shift
@@ -290,10 +370,6 @@ fn clip(n: &mut Notation) {
                 r.remove(0);
                 a.remove(0);
             }
-            (None, None) => {
-                // substr of two empty strings: '' eq '' in Perl
-                s += 1;
-            }
             _ => break,
         }
     }
@@ -360,9 +436,9 @@ impl HgvsTranscript<'_> {
                 cdna = Some((c, String::new()));
                 break;
             }
-            // `$exons->[$i-1]`: Perl's -1 is the last exon
+            // `$exons->[$i-1]` (a position before the first exon, where Perl's -1 would be the
+            // last exon, is outside the transcript and not asked for)
             let (ps, pe) = self.exons[if i == 0 { self.exons.len() - 1 } else { i - 1 }];
-            let _ = ps;
             let updist = (pos - pe).abs();
             let downdist = (es - pos).abs();
             if updist < downdist || (updist == downdist && self.strand >= 0) {
@@ -585,6 +661,9 @@ pub struct ProteinVariant<'a> {
     /// The `coding` pre-predicate and the (unshifted, cached) `partial_codon`, `stop_lost` and
     /// `start_lost` predicates.
     pub coding: bool,
+    /// The allele's unshifted translation coordinates and peptide (cached by the consequences).
+    pub translation: (Option<i64>, Option<i64>),
+    pub alt_pep: Option<String>,
     pub partial_codon: bool,
     pub stop_lost: bool,
     pub start_lost: bool,
@@ -713,15 +792,14 @@ impl ProteinTranscript<'_> {
     /// `_stop_loss_extra_AA`: residues to the new stop.
     fn stop_loss_extra_aa(
         &self,
-        v: &ProteinVariant,
-        alt: &Allele,
+        alt_cds: Option<&str>,
         ref_var_pos: i64,
         test: Option<&str>,
     ) -> Option<i64> {
         if ref_var_pos == 0 {
             return None;
         }
-        let alt_trans = translate(&self.cds.alternate_cds(v.start, v.end, alt)?, 1);
+        let alt_trans = translate(alt_cds?, 1);
         let at = alt_trans.find('*')? as i64 + 1;
         let extra = if test == Some("fs") {
             at - ref_var_pos
@@ -732,37 +810,36 @@ impl ProteinTranscript<'_> {
     }
 }
 
-/// VEP 104's `hgvs_protein` (`HGVSp`) for one allele: the notation, before `=` is escaped.
-pub fn hgvs_protein(t: &ProteinTranscript, v: &ProteinVariant) -> Option<String> {
-    if !unambiguous(v.allele) || v.allele == v.ref_allele || !v.coding {
+/// VEP 104's `hgvs_protein` (`HGVSp`) for one allele: the notation, before `=` is escaped. `tv`
+/// is the transcript variation's cache, read and left as VEP leaves it.
+pub fn hgvs_protein(t: &ProteinTranscript, v: &ProteinVariant, tv: &mut TvState) -> Option<String> {
+    if !unambiguous(v.allele) || v.allele == v.ref_allele {
         return None;
     }
     let c = &t.cds;
     let shift = v.shift.map_or(0, |s| s.length);
     let off = c.strand * shift;
-    let (Some(ts), Some(te)) = ends(&c.mapper.genomic2pep(v.start + off, v.end + off, c.strand))
-    else {
-        return None;
-    };
-    if ts == 0 || te == 0 {
-        return None;
-    }
-    let tl = (ts, te);
     let deletion = v.var_class == "deletion";
     let mut alt = Allele {
         vfs: v.allele.to_owned(),
         shift,
         is_reference: false,
     };
-    // the reference reads CDS coordinates at the allele's shift: a deletion's reference shifts
-    // as the allele does, and an insertion's (`-`, not shifted) finds the shifted coordinates
-    // the allele's `codon` left in the transcript variation's cache
-    let mut reference = Allele {
-        vfs: v.ref_allele.to_owned(),
-        shift,
-        is_reference: true,
-    };
-    if shift != 0 {
+    let (tl, alt_pep, ref_pep) = if shift != 0 {
+        // the cached translation coordinates are dropped, and computed again at the shift if
+        // the allele is coding
+        if !v.coding {
+            tv.translation = None;
+            return None;
+        }
+        let shifted = ends(&c.mapper.genomic2pep(v.start + off, v.end + off, c.strand));
+        tv.translation = Some(shifted);
+        let (Some(ts), Some(te)) = shifted else {
+            return None;
+        };
+        if ts == 0 || te == 0 {
+            return None;
+        }
         // `shift_feature_seqs` rotates the allele (on a reverse-strand transcript by its length
         // less the shift, which Perl's loop skips when negative)
         let len = if alt.vfs == "-" {
@@ -775,13 +852,39 @@ pub fn hgvs_protein(t: &ProteinTranscript, v: &ProteinVariant) -> Option<String>
             let k = (n.max(0) % len) as usize;
             alt.vfs = format!("{}{}", &alt.vfs[k..], &alt.vfs[..k]);
         }
-        // the reference of a deletion takes the shifted bases
-        if let (true, Some(s)) = (deletion, v.shift) {
-            reference.vfs = s.seq.clone();
+        let alt_pep = c.peptide(v.start, v.end, &alt, (ts, te));
+        // the allele's `codon` leaves the CDS coordinates at its shift
+        tv.cds = c.cds(v.start + off, v.end + off);
+        // the reference is translated again there: a deletion's reference takes the shifted
+        // bases, an insertion's (`-`, not shifted) reads the cached coordinates
+        let reference = Allele {
+            vfs: match (deletion, v.shift) {
+                (true, Some(s)) => s.seq.clone(),
+                _ => v.ref_allele.to_owned(),
+            },
+            shift,
+            is_reference: true,
+        };
+        tv.ref_pep = c.peptide(v.start, v.end, &reference, (ts, te));
+        ((ts, te), alt_pep, tv.ref_pep.clone())
+    } else {
+        if !v.coding {
+            return None;
         }
-    }
-    let alt_pep = c.peptide(v.start, v.end, &alt, tl);
-    let ref_pep = c.peptide(v.start, v.end, &reference, tl)?;
+        // all cached: another allele's shift may have moved them
+        let (Some(ts), Some(te)) = tv.translation.unwrap_or(v.translation) else {
+            return None;
+        };
+        if ts == 0 || te == 0 {
+            return None;
+        }
+        ((ts, te), v.alt_pep.clone(), tv.ref_pep.clone())
+    };
+    let (ts, te) = tl;
+    // what the fs peptides, stop-loss counts and deleted peptides read
+    let cds_now = tv.cds;
+    let alt_cds = c.alternate_cds_at(cds_now, &alt);
+    let ref_pep = ref_pep?;
     if ref_pep.is_empty() || ref_pep == "0" {
         return None;
     }
@@ -804,7 +907,7 @@ pub fn hgvs_protein(t: &ProteinTranscript, v: &ProteinVariant) -> Option<String>
         v.allele.len() as i64
     };
     let frameshift = !v.partial_codon
-        && match c.cds(v.start + off, v.end + off) {
+        && match cds_now {
             (Some(s), Some(e)) => (alt_len - (e - s + 1)).abs() % 3 != 0,
             _ => false,
         };
@@ -851,11 +954,11 @@ pub fn hgvs_protein(t: &ProteinTranscript, v: &ProteinVariant) -> Option<String>
     // `_get_hgvs_peptides`
     match kind.as_str() {
         "fs" => {
-            let alt_cds = c.alternate_cds(v.start, v.end, &alt)?;
+            let alt_cds = alt_cds.as_deref()?;
             if !alt_cds.bytes().any(|b| b"ACGT-".contains(&b)) {
                 return None;
             }
-            let alt_trans = translate(&alt_cds, 1);
+            let alt_trans = translate(alt_cds, 1);
             let ref_trans = format!("{}*", c.peptide);
             n.start = ts;
             if n.start > alt_trans.len() as i64 {
@@ -923,9 +1026,9 @@ pub fn hgvs_protein(t: &ProteinTranscript, v: &ProteinVariant) -> Option<String>
                 n.alt = Some("del".into());
             } else {
                 // `_get_del_peptides`
-                let alt_cds = c.alternate_cds(v.start, v.end, &alt)?;
                 let start = ts - 1;
-                let rest = substr(&translate(&alt_cds, 1), start, None).unwrap_or_default();
+                let rest =
+                    substr(&translate(alt_cds.as_deref()?, 1), start, None).unwrap_or_default();
                 let mut d = PNotation {
                     start: ts,
                     r: substr(c.peptide, start, None).unwrap_or_default(),
@@ -943,14 +1046,14 @@ pub fn hgvs_protein(t: &ProteinTranscript, v: &ProteinVariant) -> Option<String>
         n.r = n.r.replace("Xaa", "Ter");
         n.alt = n.alt.map(|a| a.replace("Xaa", "Ter"));
     }
-    Some(protein_format(t, v, &alt, n))
+    Some(protein_format(t, v, alt_cds.as_deref(), n))
 }
 
 /// `_get_hgvs_protein_format`.
 fn protein_format(
     t: &ProteinTranscript,
     v: &ProteinVariant,
-    tva: &Allele,
+    alt_cds: Option<&str>,
     mut n: PNotation,
 ) -> String {
     let kind = n.kind.clone().unwrap_or_default();
@@ -965,7 +1068,7 @@ fn protein_format(
     let body = if v.stop_lost && (kind == "del" || kind == ">") {
         alt = first3(&alt);
         let aa = t
-            .stop_loss_extra_aa(v, tva, n.start - 1, None)
+            .stop_loss_extra_aa(alt_cds, n.start - 1, None)
             .map_or("?".to_owned(), |x| x.to_string());
         alt.push_str(&format!("extTer{aa}"));
         if r.len() > 3 && kind == "del" {
@@ -1000,7 +1103,7 @@ fn protein_format(
             last3(&r)
         };
         if r.ends_with('X') {
-            if let Some(aa) = t.stop_loss_extra_aa(v, tva, n.start - 1, Some("loss")) {
+            if let Some(aa) = t.stop_loss_extra_aa(alt_cds, n.start - 1, Some("loss")) {
                 alt.push_str(&format!("extTer{aa}"));
             }
         }
@@ -1017,7 +1120,7 @@ fn protein_format(
             format!("{r}{}{alt}", n.start)
         } else {
             let aa = t
-                .stop_loss_extra_aa(v, tva, n.start - 1, Some("fs"))
+                .stop_loss_extra_aa(alt_cds, n.start - 1, Some("fs"))
                 .map_or("?".to_owned(), |x| x.to_string());
             format!("{r}{}{alt}fsTer{aa}", n.start)
         }
@@ -1046,6 +1149,157 @@ mod tests {
         assert_eq!(var_class(&["AT", "-"]), "deletion");
         assert_eq!(var_class(&["C", "CA", "T"]), "indel");
         assert_eq!(var_class(&["AC", "GT"]), "substitution");
+    }
+
+    /// A genome of one chromosome `1`: "ATGC" repeated over 200 bases, as a plain FASTA with
+    /// its `.fai` in a fresh directory.
+    fn fixture() -> (tempdir::Dir, Genome) {
+        let d = tempdir::Dir::new();
+        let bases: String = "ATGC".repeat(50);
+        let fa = d.0.join("ref.fa");
+        std::fs::write(&fa, format!(">1\n{bases}\n")).unwrap();
+        std::fs::write(d.0.join("ref.fa.fai"), "1\t200\t3\t200\t201\n").unwrap();
+        let g = Genome::open(&fa, "GRCh38").unwrap();
+        (d, g)
+    }
+
+    /// A temporary directory removed on drop.
+    mod tempdir {
+        pub struct Dir(pub std::path::PathBuf);
+        impl Dir {
+            pub fn new() -> Dir {
+                let p = std::env::temp_dir().join(format!(
+                    "aim-hgvs-{}-{:?}",
+                    std::process::id(),
+                    std::thread::current().id()
+                ));
+                std::fs::create_dir_all(&p).unwrap();
+                Dir(p)
+            }
+        }
+        impl Drop for Dir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+
+    #[test]
+    fn transcript_notation() {
+        let (_d, mut g) = fixture();
+        assert_eq!(g.seq("1", 60, 66).unwrap(), "CATGCAT");
+        // a non-coding transcript on the forward strand: exons 51-80 and 101-150
+        let exons = [(51, 80, 1, -1), (101, 150, 1, -1)];
+        let mapper = TranscriptMapper::new(&exons, None, None);
+        let tr = HgvsTranscript {
+            stable_id: "ENST1",
+            version: Some(2),
+            chr: "1",
+            start: 51,
+            end: 150,
+            strand: 1,
+            exons: vec![(51, 80), (101, 150)],
+            mapper: &mapper,
+            cdna_coding_start: None,
+            cdna_coding_end: None,
+        };
+        let mut h = |s: i64, e: i64, r: &str, a: &str, class: &str| {
+            let shift = (class == "insertion" || class == "deletion")
+                .then(|| genomic_shift(&mut g, "1", (s, e), r, a, 1).unwrap());
+            let n = hgvs_transcript(
+                &mut g,
+                &tr,
+                s,
+                e,
+                r,
+                a,
+                class,
+                shift.as_ref(),
+                (None, None),
+                true,
+            )
+            .unwrap();
+            (n, shift.map_or(0, |x| x.length))
+        };
+        // exonic, then 2 bp into the intron from either side
+        assert_eq!(
+            h(60, 60, "C", "G", "SNP").0.as_deref(),
+            Some("ENST1.2:n.10C>G")
+        );
+        assert_eq!(
+            h(82, 82, "T", "A", "SNP").0.as_deref(),
+            Some("ENST1.2:n.30+2T>A")
+        );
+        assert_eq!(
+            h(99, 99, "G", "A", "SNP").0.as_deref(),
+            Some("ENST1.2:n.31-2G>A")
+        );
+        // an A inserted between C64 and A65 shifts 3' past A65 and duplicates it
+        assert_eq!(
+            h(65, 64, "-", "A", "insertion"),
+            (Some("ENST1.2:n.15dup".into()), 1)
+        );
+        // deleting T66 (between A and G): nothing to shift along
+        assert_eq!(
+            h(66, 66, "T", "-", "deletion"),
+            (Some("ENST1.2:n.16del".into()), 0)
+        );
+    }
+
+    #[test]
+    fn protein_formats() {
+        let mapper = TranscriptMapper::new(&[(1, 30, 1, -1)], Some(1), Some(30));
+        let t = ProteinTranscript {
+            name: "ENSP1.1".into(),
+            cds: Cds {
+                strand: 1,
+                mapper: &mapper,
+                translateable: "ATGAAAGGGTAA",
+                peptide: "MKG",
+                utr3: "",
+                codon_table: 1,
+                seq_edits: &[],
+            },
+        };
+        let v = ProteinVariant {
+            start: 1,
+            end: 1,
+            ref_allele: "A",
+            allele: "G",
+            var_class: "SNP",
+            shift: None,
+            coding: true,
+            translation: (Some(1), Some(1)),
+            alt_pep: None,
+            partial_codon: false,
+            stop_lost: false,
+            start_lost: false,
+        };
+        let f = |start: i64, end: i64, r: &str, alt: &str, kind: &str| {
+            let n = PNotation {
+                start,
+                end,
+                r: r.into(),
+                alt: Some(alt.into()),
+                kind: Some(kind.into()),
+                ..Default::default()
+            };
+            protein_format(&t, &v, None, n)
+        };
+        assert_eq!(f(2, 2, "Lys", "Arg", ">"), "ENSP1.1:p.Lys2Arg");
+        assert_eq!(f(2, 2, "Lys", "Lys", ">"), "ENSP1.1:p.Lys2=");
+        assert_eq!(f(2, 3, "LysGly", "del", "del"), "ENSP1.1:p.Lys2_Gly3del");
+        // a dup keeps the insertion's reference (`-`) and names the duplicated peptides
+        assert_eq!(f(2, 3, "-", "LysGly", "dup"), "ENSP1.1:p.Lys2_Gly3dup");
+        assert_eq!(f(2, 2, "-", "Lys", "dup"), "ENSP1.1:p.Lys2dup");
+        assert_eq!(f(3, 2, "LysGly", "Ser", "ins"), "ENSP1.1:p.Lys2_Gly3insSer");
+        assert_eq!(
+            f(2, 2, "Lys", "SerThr", "delins"),
+            "ENSP1.1:p.Lys2delinsSerThr"
+        );
+        // a frameshift to an immediate stop, and one whose stop is not found
+        assert_eq!(f(2, 2, "Lys", "Ter", "fs"), "ENSP1.1:p.Lys2Ter");
+        assert_eq!(f(2, 2, "Lys", "Arg", "fs"), "ENSP1.1:p.Lys2ArgfsTer?");
     }
 
     #[test]

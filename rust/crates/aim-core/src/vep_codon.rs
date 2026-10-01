@@ -201,7 +201,12 @@ impl<'a> Cds<'a> {
     /// own shift) in place, the 3' UTR appended.
     pub fn alternate_cds(&self, start: i64, end: i64, a: &Allele) -> Option<String> {
         let off = self.strand * a.shift;
-        let (Some(cs), Some(ce)) = self.cds(start + off, end + off) else {
+        self.alternate_cds_at(self.cds(start + off, end + off), a)
+    }
+
+    /// `_get_alternate_cds` at given (VEP-cached) CDS coordinates.
+    pub fn alternate_cds_at(&self, cds: (Option<i64>, Option<i64>), a: &Allele) -> Option<String> {
+        let (Some(cs), Some(ce)) = cds else {
             return None;
         };
         let up = substr(self.translateable, 0, Some(cs - 1))?;

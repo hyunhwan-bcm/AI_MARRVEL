@@ -62,11 +62,13 @@ pub struct Shown {
     pub cds: (Option<i64>, Option<i64>),
     pub translation: (Option<i64>, Option<i64>),
     pub amino_acids: Option<String>,
+    pub codons: Option<String>,
 }
 
 impl Shown {
-    /// What allele `c` prints with the transcript variation's cache `tv` (read before its HGVS).
-    pub fn new(c: &Coding, tv: &crate::vep_hgvs::TvState) -> Shown {
+    /// What allele `c` on `ct` prints with the transcript variation's cache `tv` (read before its
+    /// HGVS).
+    pub fn new(c: &Coding, ct: &CachedTranscript, tv: &crate::vep_hgvs::TvState) -> Shown {
         let truthy = |s: &&String| !s.is_empty() && *s != "0";
         // `pep_allele_string`: its own peptide, the reference's as cached
         let amino_acids = match (
@@ -80,10 +82,30 @@ impl Shown {
             }),
             _ => None,
         };
+        let translation = tv.translation.unwrap_or(c.translation);
+        // an allele whose codon the consequences never asked for (an ambiguous one in a frame
+        // shift: no peptide, no codon comparison) has it made for the row, from the cache
+        let codons = if !crate::vep_codon::unambiguous(c.allele) && c.frameshift() {
+            let allele = crate::vep_codon::Allele {
+                vfs: c.allele.to_owned(),
+                shift: 0,
+                is_reference: false,
+            };
+            match translation {
+                (Some(ts), Some(te)) => crate::vep_codon::Cds::new(ct)
+                    .display_codon_at((ts, te), tv.cds, &allele, c.codon_position)
+                    .filter(|d| truthy(&d))
+                    .and_then(|a| c.ref_display_codon.as_ref().map(|r| format!("{r}/{a}"))),
+                _ => None,
+            }
+        } else {
+            c.display_codons.clone()
+        };
         Shown {
             cds: tv.cds,
-            translation: tv.translation.unwrap_or(c.translation),
+            translation,
             amino_acids,
+            codons,
         }
     }
 }
@@ -122,7 +144,7 @@ impl TranscriptAllele<'_> {
             cdna = format_coords(c.cdna.0, c.cdna.1);
             if c.coding {
                 aa = self.shown.amino_acids.clone();
-                codons = c.display_codons.clone();
+                codons = self.shown.codons.clone();
                 cds = format_coords(self.shown.cds.0, self.shown.cds.1);
                 prot = format_coords(self.shown.translation.0, self.shown.translation.1);
             }

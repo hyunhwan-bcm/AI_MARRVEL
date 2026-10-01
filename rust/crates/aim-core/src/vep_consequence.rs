@@ -83,6 +83,9 @@ pub struct Coding<'a> {
     pub ref_pep: Option<String>,
     pub alt_pep: Option<String>,
     pub display_codons: Option<String>,
+    /// The reference's display codon and the variant's `codon_position`.
+    pub ref_display_codon: Option<String>,
+    pub codon_position: Option<i64>,
     /// VEP's `coding` pre-predicate (`_bvfo_preds`: a lone Gap in CDS coordinates counts) and
     /// `within_cds`.
     pub coding: bool,
@@ -318,8 +321,9 @@ impl<'a> Coding<'a> {
                 .and_then(|t| seqs.display_codon(vf_start, vf_end, a, t, codon_position))
                 .filter(|d| truthy(d))
         };
+        let ref_display_codon = display(&reference);
         let display_codons =
-            display(&alt).and_then(|a| display(&reference).map(|r| format!("{r}/{a}")));
+            display(&alt).and_then(|a| ref_display_codon.as_ref().map(|r| format!("{r}/{a}")));
         let utr = within_feature
             && coding_region
                 .is_some_and(|(a, b)| !overlap(min_vf, max_vf, a, b) || min_vf < a || max_vf > b);
@@ -339,6 +343,8 @@ impl<'a> Coding<'a> {
             ref_pep,
             alt_pep,
             display_codons,
+            ref_display_codon,
+            codon_position,
             coding,
             within_cds,
             within_cdna,
@@ -532,7 +538,8 @@ impl Coding<'_> {
         last < 3 && last > 0
     }
     pub fn frameshift(&self) -> bool {
-        if self.partial_codon() {
+        // `seq_length` is undefined for an allele that is not DNA (`D2`, a breakend)
+        if self.partial_codon() || !(self.allele == "-" || crate::vep_codon::is_dna(self.allele)) {
             return false;
         }
         let (Some(s), Some(e)) = self.cds else {

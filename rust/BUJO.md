@@ -162,5 +162,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - ! the plugins read the input's Consequence/Amino_acids/SYMBOL: now the recomputed ones
   - – whole files identical to seeded VEP on every set (ClinVar, cache-sampled, chr, multi, chr17 battery, g2s, MT, #60/#61 review sets, 23 exome chromosome tasks) but DGCR5 HGNC_ID; SIFT/PolyPhen/DOMAINS empty
   - – ClinVar 17.5k 95 s / 2.4 GB (regulatory chunk parsing dominates); exome chromosome task 1-6 s
+  - ! Review of #62 (84,803-variant exome identical; 116 s vs VEP 164 s): lower-case alleles hashed before upper-casing; `validate_vf` skips (contigs not in the cache, no base in the allele string, a `-` reference off an insertion); a genotype index past the alleles; ID `0`; an ambiguous allele's codon made at output from the shifted cache
+  - × Fixed; unsupported input exits 3 (VEP falls back): >5 alternates in one genotype (Perl's hash splits), duplicate sample names, malformed lines, no #CHROM line, a generator panic; `rust_vep` in nextflow_schema.json
 - × C step 5: `--rust_vep true` (with `--rust`, hg38): ANNOTATE_BY_VEP runs `aim vep`; exit 3 falls back to VEP
   - – ClinVar sample end to end (108/108 tasks, 2 min 47 s): the 23 VEP tables identical to the VEP-based `--rust` run but SIFT/PolyPhen/DOMAINS; every other output identical as row sets but 1-ulp merge-order noise in one imputed column (two VEP-based runs differ the same way)

@@ -168,6 +168,7 @@ pub fn class_so_term(alleles: &[&str]) -> &'static str {
 
 /// The variants of one VCF line (none for a line without samples: `--individual all`).
 pub fn line_variants(line: &str, samples: &[String]) -> io::Result<Vec<Variant>> {
+    let unsupported = |m: String| io::Error::new(io::ErrorKind::Unsupported, m);
     let f: Vec<&str> = line.split('\t').collect();
     let gt_at = f
         .get(8)
@@ -175,55 +176,76 @@ pub fn line_variants(line: &str, samples: &[String]) -> io::Result<Vec<Variant>>
     let mut out = Vec::new();
     for (i, vf) in vcf_line_vfs(line, samples)?.into_iter().enumerate() {
         if vf.structural {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("structural variant {} is not supported", vf.name),
-            ));
+            return Err(unsupported(format!(
+                "structural variant {} is not supported",
+                vf.name
+            )));
         }
         let Some(gt) = gt_at.and_then(|g| f.get(9 + i)?.split(':').nth(g)) else {
             continue;
         };
-        // `get_samples_genotypes`: all-reference genotypes and missing calls are skipped
+        // `get_samples_genotypes`: all-reference genotypes are skipped; the others are
+        // translated to the line's alleles (missing calls dropped, an index past the alleles an
+        // empty one), joined and split again, which drops trailing empty alleles
         let all_ref = gt.split(['/', '|', '\\']).all(|b| b == "0");
         if all_ref {
             continue;
         }
         let phased = gt.contains('|');
-        let bits: Vec<&str> = gt
+        let translated: Vec<String> = gt
             .split(if phased { '|' } else { '/' })
             .filter(|b| *b != ".")
+            .map(|b| match b.parse::<usize>() {
+                Ok(0) => vf.raw_ref.clone(),
+                Ok(k) => vf.raw_alts.get(k - 1).cloned().unwrap_or_default(),
+                Err(_) => String::new(),
+            })
             .collect();
+        let mut bits: Vec<String> = translated
+            .join(if phased { "|" } else { "/" })
+            .split(['/', '|', '\\'])
+            .map(str::to_owned)
+            .collect();
+        while bits.last().is_some_and(String::is_empty) {
+            bits.pop();
+        }
         if bits.is_empty() {
             continue;
         }
-        // the genotype's alleles as VEP's trimmed alleles (index 0 the reference)
-        let allele_of = |b: &str| -> Option<String> {
-            match b.parse::<usize>().ok()? {
-                0 => Some(vf.ref_allele.clone()),
-                k => vf.alts.get(k - 1).cloned(),
+        if bits.iter().any(String::is_empty) {
+            return Err(unsupported(format!(
+                "genotype {gt} of {} at {}:{} names an allele the line does not have",
+                vf.sample.as_deref().unwrap_or(""),
+                vf.chr,
+                vf.start
+            )));
+        }
+        // `keys %non_ref`: the genotype's other alleles, in their original case, in the order
+        // seeded Perl lists a hash filled in genotype order (VEP upper-cases them afterwards)
+        let mut non_ref: Vec<&str> = Vec::new();
+        for b in &bits {
+            if *b != vf.raw_ref && !b.contains('*') && !non_ref.contains(&b.as_str()) {
+                non_ref.push(b);
             }
-        };
-        let genotype: Vec<Option<String>> = gt
-            .split(['/', '|', '\\'])
-            .filter(|b| *b != ".")
-            .map(allele_of)
-            .collect();
-        // `keys %non_ref`, the hash filled in genotype order
-        let non_ref: Vec<&str> = vf
-            .sample_alts
-            .as_ref()
-            .map(|s| s.iter().map(String::as_str).collect())
-            .unwrap_or_default();
-        let alleles: Vec<String> = crate::perl_hash::keys_order(&non_ref)
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        }
         // a genotype of reference and `*` only is a non-variant: no rows
-        if alleles.is_empty() {
+        if non_ref.is_empty() {
             continue;
         }
-        let mut unique: Vec<&Option<String>> = Vec::new();
-        for g in &genotype {
+        // Perl splits a hash at its sixth key, and VEP's reused `%non_ref` keeps the larger
+        // array for the rest of the run
+        if non_ref.len() > 5 {
+            return Err(unsupported(format!(
+                "a genotype with {} alternate alleles at {}:{}",
+                non_ref.len(),
+                vf.chr,
+                vf.start
+            )));
+        }
+        let raw_order = crate::perl_hash::keys_order(&non_ref);
+        let alleles: Vec<String> = raw_order.iter().map(|a| a.to_ascii_uppercase()).collect();
+        let mut unique: Vec<&String> = Vec::new();
+        for g in &bits {
             if !unique.contains(&g) {
                 unique.push(g);
             }
@@ -232,11 +254,25 @@ pub fn line_variants(line: &str, samples: &[String]) -> io::Result<Vec<Variant>>
         let mut all: Vec<&str> = vec![vf.ref_allele.as_str()];
         all.extend(alleles.iter().map(String::as_str));
         let allele_string = all.join("/");
-        let uploaded = if vf.name.is_empty() || vf.name == "." {
+        // an ID of `.` is printed with the (upper-case) allele string; a Perl-false ID (`0`)
+        // was replaced in `validate_vf` by a name made before upper-casing
+        let uploaded = if vf.name.is_empty() || vf.name == "0" {
+            let mut raw = vec![vf.raw_ref.clone()];
+            raw.extend(raw_order.iter().map(|a| (*a).to_owned()));
+            format!("{}_{}_{}", vf.chr, vf.start, raw.join("/"))
+        } else if vf.name == "." {
             format!("{}_{}_{}", vf.chr, vf.start, allele_string)
         } else {
             vf.name.clone()
         };
+        // `validate_vf`: coordinates, an allele string with a base or `-`, and an insertion's
+        // coordinates (start = end + 1)
+        if vf.start > vf.end + 1
+            || !allele_string.bytes().any(|b| b"ACGT-".contains(&b))
+            || (allele_string.starts_with("-/") && vf.start != vf.end + 1)
+        {
+            continue;
+        }
         out.push(Variant {
             class: class_so_term(&all),
             vf,
@@ -283,7 +319,8 @@ pub fn write(
         col("IMPACT"),
         col("VARIANT_CLASS"),
     );
-    let mut samples: Vec<String> = Vec::new();
+    // `--individual all` lists the samples of the #CHROM line (VEP dies without one)
+    let mut samples: Option<Vec<String>> = None;
     let mut row = vec!["-".to_owned(); BASE_COLUMNS.len()];
     for l in vcf.lines() {
         let l = l?;
@@ -291,10 +328,31 @@ pub fn write(
             continue;
         }
         if let Some(h) = l.strip_prefix('#') {
-            samples = h.split('\t').skip(9).map(str::to_owned).collect();
+            let names: Vec<String> = h.split('\t').skip(9).map(str::to_owned).collect();
+            let mut seen = std::collections::HashSet::new();
+            if let Some(d) = names.iter().find(|s| !seen.insert(s.as_str())) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!("sample {d} appears twice in the VCF header"),
+                ));
+            }
+            samples = Some(names);
             continue;
         }
-        for v in line_variants(&l, &samples)? {
+        let Some(samples) = samples.as_deref() else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the VCF has no #CHROM line",
+            ));
+        };
+        if samples.is_empty() {
+            continue;
+        }
+        for v in line_variants(&l, samples)? {
+            // `validate_vf`: a chromosome the cache (and its synonyms) lacks is skipped
+            if !transcripts.has_chr(&v.vf.chr) {
+                continue;
+            }
             let near = transcripts.near(&v.vf)?;
             let features: Vec<Option<&str>> = if near.transcripts.is_empty() {
                 vec![None]
@@ -361,6 +419,31 @@ mod tests {
             let line = format!("1\t100\t.\tC\tT,*\t.\t.\t.\tGT\t{gt}");
             assert!(line_variants(&line, &s).unwrap().is_empty(), "{gt}");
         }
+        // lower-case alleles: ordered as written (`c`, `a`), upper-cased after
+        let v = line_variants("1\t100\t.\tg\tc,a\t.\t.\t.\tGT\t1/2", &s).unwrap();
+        let ordered = crate::perl_hash::keys_order(&["c", "a"]);
+        let expect: Vec<String> = ordered.iter().map(|a| a.to_ascii_uppercase()).collect();
+        assert_eq!(v[0].alleles, expect);
+        // an index past the alleles at the end is dropped (`1/3` with two alternates: HOM)
+        let v = line_variants("1\t100\t.\tC\tT,G\t.\t.\t.\tGT\t1/3", &s).unwrap();
+        assert_eq!(
+            (v[0].alleles.clone(), v[0].zyg.as_str()),
+            (vec!["T".to_owned()], "HOM")
+        );
+        // an ID of 0 is no ID
+        let v = line_variants("1\t100\t0\tc\tt\t.\t.\t.\tGT\t0/1", &s).unwrap();
+        assert_eq!(v[0].uploaded, "1_100_c/t");
+        // validate_vf: no base in the allele string, and a `-` reference not at an insertion
+        assert!(line_variants("1\t100\t.\tN\tR\t.\t.\t.\tGT\t0/1", &s)
+            .unwrap()
+            .is_empty());
+        assert!(line_variants("1\t100\t.\t-\tA\t.\t.\t.\tGT\t0/1", &s)
+            .unwrap()
+            .is_empty());
+        // more than five alternates in one genotype: unsupported (Perl's hash splits)
+        let line = "1\t100\t.\tC\tA,G,T,CA,CG,CT\t.\t.\t.\tGT\t1/2/3/4/5/6";
+        let e = line_variants(line, &s).err().unwrap();
+        assert_eq!(e.kind(), io::ErrorKind::Unsupported);
         // half-missing calls keep the called allele
         let v = line_variants("1\t100\t.\tC\tT\t.\t.\t.\tGT\t./1", &s).unwrap();
         assert_eq!(v[0].zyg, "HOM");

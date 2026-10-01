@@ -221,6 +221,10 @@ pub struct Vf {
     /// (`create_individual_VariationFeatures`); None without a GT field.
     pub sample_alts: Option<Vec<String>>,
     pub structural: bool,
+    /// The trimmed reference and alternates before upper-casing (VEP builds a sample's alleles
+    /// from these and upper-cases them later, in `validate_vf`).
+    pub raw_ref: String,
+    pub raw_alts: Vec<String>,
 }
 
 impl Vf {
@@ -235,8 +239,11 @@ impl Vf {
     /// `chr_start_<the sample's allele string>` (OutputFactory.pm:869, Parser.pm:511), whose
     /// alternates are some of the line's, in Perl hash order for a sample with two.
     fn uploaded_name_matches(&self, up: &str) -> bool {
-        if self.name.is_empty() || self.name == "." {
-            let prefix = format!("{}_{}_{}", self.chr, self.start, self.ref_allele);
+        // no ID (or Perl-false `0`) is named in validate_vf before upper-casing, `.` after
+        if self.name.is_empty() || self.name == "." || self.name == "0" {
+            let up = up.to_ascii_uppercase();
+            let prefix =
+                format!("{}_{}_{}", self.chr, self.start, self.ref_allele).to_ascii_uppercase();
             up.strip_prefix(prefix.as_str()).is_some_and(|rest| {
                 rest.is_empty()
                     || rest.strip_prefix('/').is_some_and(|alts| {
@@ -266,10 +273,14 @@ impl Vf {
 pub(crate) fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() < 8 {
-        return Err(err(format!("VCF line with fewer than 8 columns: {line}")));
+        return Err(unsupported(format!(
+            "VCF line with fewer than 8 columns: {line}"
+        )));
     }
     let (chr, pos, ids, r, alts, info) = (f[0], f[1], f[2], f[3], f[4], f[7]);
-    let pos: i64 = pos.parse().map_err(|_| err(format!("bad POS in {line}")))?;
+    let pos: i64 = pos
+        .parse()
+        .map_err(|_| unsupported(format!("bad POS in {line}")))?;
     let alts: Vec<&str> = if alts.is_empty() {
         Vec::new()
     } else {
@@ -327,6 +338,7 @@ pub(crate) fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>
         }
     }
     // validate_vf upper-cases the allele string after the trimming above (Parser.pm:587)
+    let (raw_ref, raw_alts) = (ref_allele.clone(), trimmed_alts.clone());
     let ref_allele = ref_allele.to_ascii_uppercase();
     let alts: Vec<String> = trimmed_alts
         .iter()
@@ -346,6 +358,8 @@ pub(crate) fn vcf_line_vfs(line: &str, samples: &[String]) -> io::Result<Vec<Vf>
         alts,
         sample_alts: None,
         structural,
+        raw_ref,
+        raw_alts,
     };
     Ok(if samples.is_empty() {
         vec![base]
@@ -2087,7 +2101,7 @@ fn annotate_variant(
                         coding.ref_pep.clone(),
                     )
                 });
-                let shown = crate::vep_rows::Shown::new(&coding, tv);
+                let shown = crate::vep_rows::Shown::new(&coding, ct, tv);
                 // VEP's HGVS columns are only for variants within the transcript
                 let within = vf.end >= ct.tr.start as i64 && vf.start <= ct.tr.end as i64;
                 let hgvs = if within {

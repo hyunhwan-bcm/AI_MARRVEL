@@ -238,7 +238,7 @@ pub fn hash(key: &[u8]) -> u32 {
 }
 
 /// The order `keys` lists a hash built by inserting `keys` in order (repeats ignored), for at
-/// most 8 distinct keys (one 8-bucket array).
+/// most 5 distinct keys (one 8-bucket array: Perl splits it at the sixth).
 pub fn keys_order<'a>(keys: &[&'a str]) -> Vec<&'a str> {
     let mut distinct: Vec<&str> = Vec::new();
     for k in keys {
@@ -246,7 +246,8 @@ pub fn keys_order<'a>(keys: &[&'a str]) -> Vec<&'a str> {
             distinct.push(k);
         }
     }
-    assert!(distinct.len() <= 8, "keys_order: more than 8 keys");
+    // Perl splits a hash at its sixth key; callers stop before that
+    debug_assert!(distinct.len() <= 5, "keys_order: more than 5 keys");
     // by bucket from the last, the newest first within one
     let mut order: Vec<(u32, usize, &str)> = distinct
         .iter()

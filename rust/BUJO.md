@@ -166,3 +166,4 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - × Fixed; unsupported input exits 3 (VEP falls back): >5 alternates in one genotype (Perl's hash splits), duplicate sample names, malformed lines, no #CHROM line, a generator panic; `rust_vep` in nextflow_schema.json
 - × C step 5: `--rust_vep true` (with `--rust`, hg38): ANNOTATE_BY_VEP runs `aim vep`; exit 3 falls back to VEP
   - – ClinVar sample end to end (108/108 tasks, 2 min 47 s): the 23 VEP tables identical to the VEP-based `--rust` run but SIFT/PolyPhen/DOMAINS; every other output identical as row sets but 1-ulp merge-order noise in one imputed column (two VEP-based runs differ the same way)
+- × Native runs reserve 4 GB per task (`native/native.config`): `conf/base.config`'s 25 GB ran one task at a time on a 32 GB Mac; ClinVar sample `--rust --rust_vep` 2 min 47 s → 47 s, outputs unchanged

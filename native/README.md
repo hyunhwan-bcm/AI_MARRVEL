@@ -31,6 +31,10 @@ pixi run -e r install-ontologysimilarity
 REF_DIR=/path/to/aim-data native/run_fixture.sh   # FIXTURE, OUT, STORE_DIR optional
 ```
 
+Each task reserves 4 GB here (`conf/base.config` asks 25 GB, which on a 32 GB machine lets
+only one task run at a time); pass `-c` with a larger `process.memory` for unusually large
+inputs.
+
 ## Known data issue: hg38 gnomAD genome index
 
 The published `vep/hg38/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz.tbi` does not match its data

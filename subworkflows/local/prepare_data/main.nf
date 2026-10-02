@@ -50,10 +50,13 @@ workflow PREPARE_DATA {
     if (params.ref_ver == 'hg38' && !gnomad_in_store) {
         gnomad_tbi = INDEX_GNOMAD_GENOMES(vep_tuple.map { it[2] })
         vep_tuple = vep_tuple.combine(gnomad_tbi).map { t ->
+            // combine may or may not flatten the tuple: [tuple, tbi] or [...tuple, tbi]
             def tbi = t[-1]
-            def v = t[0..-2]
-            def idx = v[11] instanceof List ? v[11] : [v[11]]
-            v[11] = idx.findAll { it.name != tbi.name } + [tbi]
+            def v = new ArrayList(t.size() == 2 && t[0] instanceof List ? t[0] : t[0..-2])
+            // the last item holds the lookup files' indexes (vep_idx)
+            def last = v.size() - 1
+            def idx = v[last] instanceof List ? v[last] : [v[last]]
+            v[last] = idx.findAll { it.name != tbi.name } + [tbi]
             v
         }
     }

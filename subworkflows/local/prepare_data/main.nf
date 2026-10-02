@@ -4,6 +4,7 @@ include {
     STORE_S3_BUCKET_DATA_EXCEPT_VEP;
     STORE_S3_BUCKET_DATA_ONLY_VEP;
     SPLIT_DATA;
+    INDEX_GNOMAD_GENOMES;
     BUILD_REFERENCE_INDEX;
 } from "../../../modules/local/prepare_data"
 
@@ -41,6 +42,21 @@ workflow PREPARE_DATA {
         params.bed_filter ? file(params.bed_filter) : moduleDir.resolve("../../../assets/NO_FILE"),
         params.exome_filter,
     )
+
+    // hg38: the bucket's gnomAD genome index does not match its file; use one built from it
+    // (unless a lookup store has gnomAD, which is then read instead)
+    def gnomad38 = 'gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz'
+    def gnomad_in_store = params.vep_store && file("${params.vep_store}/${gnomad38}/store.json").exists()
+    if (params.ref_ver == 'hg38' && !gnomad_in_store) {
+        gnomad_tbi = INDEX_GNOMAD_GENOMES(vep_tuple.map { it[2] })
+        vep_tuple = vep_tuple.combine(gnomad_tbi).map { t ->
+            def tbi = t[-1]
+            def v = t[0..-2]
+            def idx = v[11] instanceof List ? v[11] : [v[11]]
+            v[11] = idx.findAll { it.name != tbi.name } + [tbi]
+            v
+        }
+    }
 
     fasta_tuple = BUILD_REFERENCE_INDEX()
 

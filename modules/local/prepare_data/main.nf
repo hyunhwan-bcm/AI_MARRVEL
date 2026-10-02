@@ -155,6 +155,23 @@ process SPLIT_DATA {
     """
 }
 
+process INDEX_GNOMAD_GENOMES {
+    // The data bucket's hg38 gnomAD genome .tbi does not match its file, so no lookup finds a
+    // record (rust/DESIGN.md); index the file once and use that index instead.
+    storeDir "${params.storedir}/gnomad_genomes_index/${params.ref_ver}"
+
+    input:
+    path vcf
+
+    output:
+    path "${vcf.name}.tbi"
+
+    script:
+    """
+    tabix -f -p vcf $vcf
+    """
+}
+
 process BUILD_REFERENCE_INDEX {
     container "broadinstitute/gatk"
     storeDir "${params.storedir}/general/reference_index/"

@@ -190,3 +190,7 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - – hg19 store 35.7 GiB (CADD 23.0, SpliceAI 9.0, dbNSFP 4.3a 3.7) from 203.6 GiB; gnomAD r2.1 3.4 from 5.3
 - ! hg38 gnomAD index proven to return no record for any query (4 of 36,283 chunks start at real blocks: header text or chr1 records under chr9/10/21 chunks); `aim store build --no-records` checks this
 - o Decision (user): hg38 uses gnomAD genomes: store from the rebuilt index (8.9 GiB), `hom` from `nhomalt`; ClinVar sample: 600 variants gain real AF, 520 predictions change (4 by > 0.05), top 20 the same set
+- × hg38 gnomAD in the original Python/VEP path (user): INDEX_GNOMAD_GENOMES (storeDir) replaces the bucket's mismatched .tbi, `nhomalt` for `hom`
+  - ! first test run: the rebuilt index went into a non-existent 12th tuple slot (the indexes are the 11th); fixed
+  - – with the hg38 originals re-downloaded for the test: the original pipeline, `--rust` (VEP rows + aim lookups) and `--rust_vep` with the store give identical predictions (ClinVar sample; HG002 but the 25 diffusion cells); original HG002 17 min 59 s
+- × Review of #66: --no-records proof also covers htslib's linear-index starts (a forged index is refused) and refuses when another index exists; mature_miRNA_variant ends the term list (tier cutoff); miRNA re-checked on 44,354 rows against VEP

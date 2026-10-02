@@ -1,5 +1,6 @@
 //! Core computations of the AI-MARRVEL (AIM) Rust port.
 
+pub mod blacklist;
 pub mod diffusion;
 pub mod features;
 pub mod fill;

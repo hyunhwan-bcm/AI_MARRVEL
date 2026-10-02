@@ -88,12 +88,12 @@ process SPLIT_DATA {
         emit: omim_tuple
     )
 
-    // GNOMAD VCF
+    // GNOMAD VCF: the blacklists, or a lookup store's copies (--vep_store), which have no index
     tuple(
-        path("data_except_vep/filter_vep/${params.ref_ver}/gnomad.${params.ref_ver}.blacklist.genomes.vcf.gz"), // ref_gnomad_genome
-        path("data_except_vep/filter_vep/${params.ref_ver}/gnomad.${params.ref_ver}.blacklist.genomes.vcf.gz.tbi"), // ref_gnomad_genome_idx
-        path("data_except_vep/filter_vep/${params.ref_ver}/gnomad.${params.ref_ver}.blacklist.exomes.vcf.gz"), // ref_gnomad_exome
-        path("data_except_vep/filter_vep/${params.ref_ver}/gnomad.${params.ref_ver}.blacklist.exomes.vcf.gz.tbi"), // ref_gnomad_exome_idx
+        path("gnomad.${params.ref_ver}.blacklist.genomes.vcf.gz"), // ref_gnomad_genome
+        path("gnomad.${params.ref_ver}.blacklist.genomes.vcf.gz.tbi", arity: '0..*'), // ref_gnomad_genome_idx
+        path("gnomad.${params.ref_ver}.blacklist.exomes.vcf.gz"), // ref_gnomad_exome
+        path("gnomad.${params.ref_ver}.blacklist.exomes.vcf.gz.tbi", arity: '0..*'), // ref_gnomad_exome_idx
         emit: gnomad_tuple
     )
 
@@ -102,7 +102,7 @@ process SPLIT_DATA {
         path("data_only_vep/vep/${params.ref_ver}/"), // vep_dir_cache
         path("data_only_vep/vep/${params.ref_ver}/Plugins/"), // vep_dir_plugins
         path("gnomad.genomes*.vcf.gz", arity: 1), // vep_custom_gnomad
-        path("data_only_vep/vep/${params.ref_ver}/clinvar_20220730.vcf.gz"), // vep_custom_clinvar
+        path("clinvar_20220730.vcf.gz"), // vep_custom_clinvar
         path("data_only_vep/vep/${params.ref_ver}/HGMD_Pro_2022.2_${params.ref_ver}.vcf.gz"), // vep_custom_hgmd
         path("new_tabbed_revel*.tsv.gz", arity: 1), // vep_plugin_revel
         path("spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz"), // vep_plugin_spliceai_snv
@@ -144,11 +144,22 @@ process SPLIT_DATA {
     # lookup files: a lookup store's copy (--vep_store) when it has one, else the original file
     store="${params.vep_store ?: ''}"
     for f in \${vep_gnomad_name} \${vep_revel_name} \${vep_cadd_name} \${vep_dbnsfp_name} \
-        spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz spliceai_scores.masked.indel.${params.ref_ver}.vcf.gz; do
+        spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz spliceai_scores.masked.indel.${params.ref_ver}.vcf.gz \
+        clinvar_20220730.vcf.gz; do
         if [ -n "\$store" ] && [ -f "\$store/\$f/store.json" ]; then
             ln -s "\$store/\$f" .
         else
             ln -s "./data_only_vep/vep/${params.ref_ver}/\$f" .
+        fi
+    done
+
+    # the gnomAD blacklists (FILTER_PROBAND): likewise, with the original's index
+    for f in gnomad.${params.ref_ver}.blacklist.genomes.vcf.gz gnomad.${params.ref_ver}.blacklist.exomes.vcf.gz; do
+        if [ -n "\$store" ] && [ -f "\$store/\$f/store.json" ]; then
+            ln -s "\$store/\$f" .
+        else
+            ln -s "./data_except_vep/filter_vep/${params.ref_ver}/\$f" .
+            ln -s "./data_except_vep/filter_vep/${params.ref_ver}/\$f.tbi" .
         fi
     done
 

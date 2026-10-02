@@ -236,6 +236,22 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// FILTER_PROBAND (three `bcftools isec` calls): the input VCF minus the records gnomAD's
+    /// genome and exome blacklists list, as isec pairs them; the lists are their VCFs or stores
+    /// built from them (`aim store build`)
+    Blacklist {
+        /// the input VCF (bgzip-compressed or plain), sorted
+        vcf: PathBuf,
+        /// the genome blacklist (gnomad.<ref>.blacklist.genomes.vcf.gz, or its store)
+        #[arg(long)]
+        genomes: PathBuf,
+        /// the exome blacklist (gnomad.<ref>.blacklist.exomes.vcf.gz, or its store)
+        #[arg(long)]
+        exomes: PathBuf,
+        /// the output VCF (plain text)
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print the records of a tabix-indexed file (or a store built from one) overlapping
     /// chr:start-end (1-based), as htslib would return them (for checking against `tabix`)
     #[command(hide = true)]
@@ -672,6 +688,39 @@ fn run(cli: Cli) -> Result<()> {
             annotated?;
             generated?;
             w.flush()?;
+        }
+        Command::Blacklist {
+            vcf,
+            genomes,
+            exomes,
+            out,
+        } => {
+            let header = vec![
+                format!("##aim_blacklistVersion={}", env!("CARGO_PKG_VERSION")),
+                format!(
+                    "##aim_blacklistCommand=blacklist {} --genomes {} --exomes {} --out {}",
+                    vcf.display(),
+                    genomes.display(),
+                    exomes.display(),
+                    out.display()
+                ),
+            ];
+            let mut g = aim_core::vep_store::Source::open(&genomes)?;
+            let mut e = aim_core::vep_store::Source::open(&exomes)?;
+            let w = BufWriter::new(File::create(&out)?);
+            let n = aim_core::blacklist::remove_blacklisted(
+                open_vcf(&vcf)?,
+                &mut g,
+                &mut e,
+                &header,
+                w,
+            )?;
+            eprintln!(
+                "aim blacklist: {} records, {} kept, {} removed",
+                n.read,
+                n.written,
+                n.read - n.written
+            );
         }
         Command::Tabix { file, region } => {
             let (chr, range) = region

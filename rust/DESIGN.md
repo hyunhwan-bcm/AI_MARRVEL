@@ -87,9 +87,28 @@ which depend on the chromosomes' merge order and differ between runs without the
 - What differs in the VEP table: those columns are absent, SpliceAI_pred has 5 parts not 9, and
   on rows dbNSFP matched VEP's own APPRIS and TSL keep VEP's values (in v1.1.3 dbNSFP's
   columns of the same names overwrite them). AIM reads none of these.
-- gnomAD, ClinVar, HGMD and REVEL stay tabix files. The bucket's hg38 gnomAD index does not
-  match its data, so a store cannot be built from it (the build reads the file through the
-  index and stops at the first bad block); as deployed it returns no records anyway.
+- HGMD (a one-record placeholder in the public bucket) and REVEL stay tabix files. The bucket's
+  hg38 gnomAD index does not match its data, so a store cannot be built from it (the build reads
+  the file through the index and stops at the first bad block); see below for the store built
+  from a rebuilt index.
+- ClinVar and gnomAD's blacklists (2026-10-02, at the user's request "replace with the
+  parquet"): stores too, for both assemblies. ClinVar is a `--custom` lookup like gnomAD
+  (QUAL and FILTER left out: 39 MB instead of 56 MB). The blacklists are FILTER_PROBAND's input:
+  its three `bcftools isec` calls keep the input's records that neither list has. With `--rust`,
+  `aim blacklist` (`blacklist.rs`) does those calls on the VCFs or the stores, which keep only
+  positions and alleles (genomes 79 MB instead of 124 MB on hg38, 70 instead of 115 on hg19).
+  It ports htslib 1.20's pairing (`bcf_sr_sort.c` with isec's default `-c none`), quirks
+  included: records pair on the same `REF>ALT` list in any order and case; the k-th copy of a
+  record pairs with the k-th copy, so step 3 can keep a copy the exome list took; and a
+  position's records can come out in another order (identical strings first). Checked:
+  crafted, random and shuffled goldens (`tools/make_goldens_blacklist.sh`, made with bcftools
+  1.20), and HG002 and the ClinVar sample on both assemblies, lists as VCFs and as stores:
+  the same records in the same order as bcftools. HG002: 15-18 s and under 75 MB instead of
+  70 s. Only the `##` lines bcftools adds (`bcftools_isecVersion`, `bcftools_isecCommand` with
+  the date) become aim's own. End to end with `--vep_store` (ClinVar sample and HG002, both
+  assemblies): VEP tables, `scores.txt` and the four models' predictions the same as before but
+  the merge-order noise in the last digit; HG002 6 min 18 s (hg38) and 6 min 14 s (hg19) instead
+  of 6 min 52 s and 7 min 21 s.
 - With `--vep_store` the pipeline does not use the original files: PREPARE_DATA links the
   store's copies under the original names, so they may be removed. Input `aim vep` does not
   support (exit status 3) then gets VEP's rows and `aim vep-annotate`'s lookups from the store;

@@ -430,6 +430,15 @@ process FILTER_PROBAND {
     path "${params.run_id}.filt.rmBL.vcf.gz", emit: vcf
 
     script:
+    // --rust: aim does the three isec calls, on the blacklist VCFs or a store's copies of them
+    // (the same records, in the same order; rust/DESIGN.md)
+    if (params.rust)
+    """
+    ${params.aim_bin} blacklist $vcf --genomes $ref_gnomad_genome --exomes $ref_gnomad_exome \\
+        --out ${params.run_id}.filt.rmBL.vcf
+    bgzip ${params.run_id}.filt.rmBL.vcf
+    """
+    else
     """
     mkdir -m777 isec_tmp1
     bcftools isec -p isec_tmp1 -w 1 -Oz \\

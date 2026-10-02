@@ -496,8 +496,8 @@ process ANNOTATE_BY_VEP {
 
     script:
     def ref_assembly = (params.ref_ver == 'hg38') ? 'GRCh38' : 'GRCh37'
-    // --rust on hg38: VEP computes the rows and consequences, then `aim vep-annotate` adds the
-    // --custom and plugin columns (the same output; validated on hg38 only, so hg19 keeps VEP's).
+    // --rust: VEP computes the rows and consequences, then `aim vep-annotate` adds the --custom and
+    // plugin columns (the same output, checked on hg38 and hg19).
     // On input aim does not reproduce (exit status 3, e.g. structural variants) VEP does it all.
     def vep_common = """--dir_cache ${vep_dir_cache} \\
         --fork ${task.cpus} --everything --format vcf \\
@@ -532,7 +532,7 @@ process ANNOTATE_BY_VEP {
     n=\$(gzip -cdf $vcf | grep -vc '^#' || true)
     bs=\$(( n < 50 ? 50 : n ))
     bs=\$(( bs > ${params.vep_buffer_size} ? ${params.vep_buffer_size} : bs ))"""
-    if (params.rust && params.rust_vep && params.ref_ver == 'hg38')
+    if (params.rust && params.rust_vep)
     """
     ${vep_setup}
     rc=0
@@ -560,7 +560,7 @@ process ANNOTATE_BY_VEP {
         exit \$rc
     fi
     """
-    else if (params.rust && params.ref_ver == 'hg38')
+    else if (params.rust)
     """
     ${vep_setup}
     VEP=\${AIM_VEP_BIN:-/opt/vep/src/ensembl-vep/vep}

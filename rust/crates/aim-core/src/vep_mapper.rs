@@ -193,6 +193,31 @@ impl TranscriptMapper {
         out
     }
 
+    /// `cdna2genomic`: the genomic pieces of cDNA `start..=end` (positions outside the exons
+    /// are left out, as the caller only looks at the mapped pieces).
+    pub fn cdna2genomic(&self, start: i64, end: i64) -> Vec<(i64, i64)> {
+        let mut by_cdna: Vec<&Pair> = self.pairs.iter().collect();
+        by_cdna.sort_by_key(|p| p.cdna_start);
+        by_cdna
+            .iter()
+            .filter(|p| p.cdna_end >= start && p.cdna_start <= end)
+            .map(|p| {
+                let (s, e) = (start.max(p.cdna_start), end.min(p.cdna_end));
+                if p.ori == 1 {
+                    (
+                        p.gen_start + (s - p.cdna_start),
+                        p.gen_start + (e - p.cdna_start),
+                    )
+                } else {
+                    (
+                        p.gen_end - (e - p.cdna_start),
+                        p.gen_end - (s - p.cdna_start),
+                    )
+                }
+            })
+            .collect()
+    }
+
     pub fn genomic2cdna(&self, start: i64, end: i64, strand: i64) -> Vec<Seg> {
         self.map(start, end, strand)
     }

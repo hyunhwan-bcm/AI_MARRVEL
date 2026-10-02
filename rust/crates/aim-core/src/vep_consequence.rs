@@ -100,6 +100,33 @@ pub struct Coding<'a> {
     pub intron_boundary: bool,
     pub ie: IntronEffects,
     pub codon_table: u32,
+    /// `within_mature_miRNA`: on a miRNA transcript, the variant overlaps a mature product
+    /// (`miRNA` attributes, cDNA ranges; the GRCh37 cache has them, the GRCh38 cache none)
+    pub mature_mirna: bool,
+}
+
+/// Perl `/(\d+)-(\d+)/` on an attribute value: the first digit run followed by `-` and digits.
+fn first_range(v: &str) -> Option<(i64, i64)> {
+    let b = v.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let s = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i + 1 < b.len() && b[i] == b'-' && b[i + 1].is_ascii_digit() {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            return Some((v[s..i].parse().ok()?, v[i + 1..j].parse().ok()?));
+        }
+    }
+    None
 }
 
 /// VEP 104's `_intron_effects` for one allele.
@@ -327,6 +354,18 @@ impl<'a> Coding<'a> {
         let utr = within_feature
             && coding_region
                 .is_some_and(|(a, b)| !overlap(min_vf, max_vf, a, b) || min_vf < a || max_vf > b);
+        let mature_mirna = &*tr.biotype == "miRNA"
+            && within_feature
+            && ct
+                .attributes
+                .iter()
+                .filter(|(code, _)| code == "miRNA")
+                .filter_map(|(_, v)| first_range(v))
+                .any(|(a, b)| {
+                    m.cdna2genomic(a, b)
+                        .iter()
+                        .any(|&(s, e)| overlap(vf_start, vf_end, s, e))
+                });
         Coding {
             tr,
             utr5: &ct.utr5,
@@ -354,6 +393,7 @@ impl<'a> Coding<'a> {
             intron_boundary,
             ie,
             codon_table: ct.codon_table,
+            mature_mirna,
         }
     }
 
@@ -408,7 +448,10 @@ impl<'a> Coding<'a> {
             self.tr.end as i64,
         );
         let protein_coding = &*self.tr.biotype == "protein_coding";
-        if self.tr.translation.is_none() && within_feature && !protein_coding {
+        if self.mature_mirna {
+            // `within_mature_miRNA` excludes the two non-coding terms
+            out.push("mature_miRNA_variant");
+        } else if self.tr.translation.is_none() && within_feature && !protein_coding {
             // exon overlap on the variant's own start and end: an insertion at an exon's
             // edge is not in it
             let exonic = self
@@ -863,7 +906,6 @@ fn intron_terms(c: &Coding) -> Vec<&'static str> {
 /// VEP 104's terms for an allele and their IMPACT: fastVEP's upstream, downstream and NMD terms
 /// (its others follow VEP 105+ and are recomputed here), the splice and intron terms, the coding
 /// terms and the UTR and non-coding-transcript terms, by rank (a stable sort, as Perl's).
-/// `mature_miRNA_variant` (tier 2) needs a `miRNA` attribute, which the cache has none of.
 pub fn vep104_terms(fastvep: &[Consequence], c: &Coding) -> (Vec<&'static str>, &'static str) {
     // tier 1: a deletion of the whole transcript is only transcript_ablation
     let r = if c.ref_allele == "-" {
@@ -905,6 +947,13 @@ pub fn vep104_terms(fastvep: &[Consequence], c: &Coding) -> (Vec<&'static str>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mirna_ranges() {
+        assert_eq!(first_range("48-69"), Some((48, 69)));
+        assert_eq!(first_range("x 12a-3 4-5"), Some((4, 5)));
+        assert_eq!(first_range("12-"), None);
+    }
 
     #[test]
     fn differing() {

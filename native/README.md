@@ -48,7 +48,7 @@ pixi run -e py bash native/fix_gnomad_hg38_index.sh DATA_DIR FIX_DIR OVERLAY_DIR
 REF_DIR=OVERLAY_DIR OUT=... native/run_fixture.sh
 ```
 
-The same file names its homozygote count `nhomalt`, while the pipeline requests
-`controls_nhomalt` (the hg19 name), so `hom` stays 0 on hg38 even with the fixed index.
-Decision (2026-09-28): leave `hom` = 0 on hg38; sourcing `nhomalt_controls_and_biobanks` from
-full gnomAD v3.1.2 (~2.3 TiB) was judged too costly.
+The same file names its homozygote count `nhomalt`, while v1.1.3 requests `controls_nhomalt`
+(the hg19 name). Since 2026-10-01 (user decision) the pipeline indexes the hg38 gnomAD file
+itself (INDEX_GNOMAD_GENOMES, once, cached in `--storedir`) and requests `nhomalt` on hg38, so hg38
+runs use the gnomAD genome frequencies and homozygote counts (rust/DESIGN.md).

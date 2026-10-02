@@ -176,7 +176,8 @@ def getAnnotateInfoRow_3_1(row, genomeRef):
 
     varObj.VARIANT_CLASS = row.VARIANT_CLASS
     varObj.Feature = row.Feature
-    varObj.hom = row.gnomADg_controls_nhomalt
+    # hg38's gnomAD genomes (v3.1.2) have nhomalt, not controls_nhomalt (rust/DESIGN.md)
+    varObj.hom = row.get("gnomADg_controls_nhomalt", row.get("gnomADg_nhomalt"))
     varObj.hgmd_id = row.hgmd  # CL added
     varObj.hgmd_symbol = row.hgmd_GENE  # CL added
     varObj.hgmd_rs = row.hgmd_RANKSCORE

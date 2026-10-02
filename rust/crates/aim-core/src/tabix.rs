@@ -139,11 +139,12 @@ impl Tabix {
         Some(hits)
     }
 
-    /// Index chunks a query could read records from: those that start at a real BGZF block
-    /// and whose first line is a record of the chunk's own sequence (a query reads only from
-    /// its first chunk when that fails or holds another sequence, as htslib does). Empty
-    /// means no query returns a record (the bucket's hg38 gnomAD file with its mismatched
-    /// `.tbi`). Tabix (`.tbi`) indexes only.
+    /// Places a query could read records from: a query starts reading at its first chunk's
+    /// start or at the linear-index offset of its first window (htslib takes the later), and
+    /// returns nothing when that is not a real BGZF block or its first line is not a record of
+    /// the queried sequence (a failed read or another sequence ends it). Empty means no query
+    /// returns a record (the bucket's hg38 gnomAD file with its mismatched `.tbi`). Tabix
+    /// (`.tbi`) indexes only.
     pub fn reachable_chunks(&mut self) -> io::Result<Vec<String>> {
         let mut tbi = self.path.as_os_str().to_owned();
         tbi.push(".tbi");
@@ -174,25 +175,35 @@ impl Tabix {
         }
         let mut out = Vec::new();
         let mut line = Vec::new();
+        // where a query can start reading: a chunk start, or (htslib's `hts_itr_query`) the
+        // linear-index offset of its first 16 kb window when that is later
         for (tid, rs) in index.reference_sequences().iter().enumerate() {
-            for bin in rs.bins().values() {
-                for chunk in bin.chunks() {
-                    let start = chunk.start();
-                    if !blocks.contains(&start.compressed()) {
-                        continue;
-                    }
-                    self.reader.seek(start)?;
-                    line.clear();
-                    if self.reader.read_until(b'\n', &mut line).is_err() {
-                        continue;
-                    }
-                    while matches!(line.last(), Some(b'\n' | b'\r')) {
-                        line.pop();
-                    }
-                    if let Some((Some(rtid), _, _)) = self.layout.interval_of(&line) {
-                        if rtid == tid {
-                            out.push(format!("{}: chunk at {start:?}", self.layout.names[tid]));
-                        }
+            let mut starts: Vec<noodles_bgzf::VirtualPosition> = rs
+                .bins()
+                .values()
+                .flat_map(|bin| bin.chunks().iter().map(|c| c.start()))
+                .collect();
+            starts.extend(rs.index().iter().copied().filter(|v| u64::from(*v) != 0));
+            starts.sort_unstable();
+            starts.dedup();
+            for start in starts {
+                if !blocks.contains(&start.compressed()) {
+                    continue;
+                }
+                self.reader.seek(start)?;
+                line.clear();
+                if self.reader.read_until(b'\n', &mut line).is_err() {
+                    continue;
+                }
+                while matches!(line.last(), Some(b'\n' | b'\r')) {
+                    line.pop();
+                }
+                if let Some((Some(rtid), _, _)) = self.layout.interval_of(&line) {
+                    if rtid == tid {
+                        out.push(format!(
+                            "{}: reading from {start:?}",
+                            self.layout.names[tid]
+                        ));
                     }
                 }
             }

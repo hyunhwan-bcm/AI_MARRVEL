@@ -918,6 +918,11 @@ pub fn vep104_terms(fastvep: &[Consequence], c: &Coding) -> (Vec<&'static str>, 
     if c.vf_start <= c.tr.start as i64 && c.vf_end >= c.tr.end as i64 && deletion {
         return (vec!["transcript_ablation"], "HIGH");
     }
+    // tier 2: a matched tier-2 term (on a transcript only mature_miRNA_variant) ends the list
+    // (`get_all_OverlapConsequences`)
+    if c.mature_mirna {
+        return (vec!["mature_miRNA_variant"], "MODIFIER");
+    }
     let mut out: Vec<&'static str> = fastvep
         .iter()
         .map(|t| t.so_term())

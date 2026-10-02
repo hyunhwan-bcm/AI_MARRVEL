@@ -263,19 +263,26 @@ which depend on the chromosomes' merge order and differ between runs without the
   does not match its data file (a freshly built index works), and that file names the field
   `nhomalt` while AIM requests `controls_nhomalt`. Proven (2026-10-01) that no query returns a
   record: a query reads from its first index chunk only when that chunk starts at a real BGZF
-  block and its first line is a record of the queried sequence. 36,279 of the 36,283 chunk
-  starts are not block starts (BGZF error); block 0 (chr1, chrY chunks) starts with header
-  text; the other three blocks hold chr1 records but belong to chr9, chr10 and chr21 chunks, and
-  every chunk start in them is mid-line. `aim store build --no-records` checks exactly this
-  (`Tabix::reachable_chunks`) and keeps only the header and sequence names: 4 KB instead of
-  11.4 GiB, the same outputs (ClinVar sample).
+  block and its first line is a record of the queried sequence. A query starts reading at its
+  first chunk's start or, when later, at the linear-index offset of its first 16 kb window
+  (htslib's `hts_itr_query`; noodles, which `Tabix` uses, does not make that adjustment, which
+  matters only for an index that does not match its file). Of the 36,858 such places in this
+  index only 4 compressed offsets are real blocks: the file's first block (header text, or
+  mid-record) and three blocks of chr1 records that belong to chr9, chr10 and chr21 chunks, where
+  every start is mid-line. `aim store build --no-records` checks exactly this
+  (`Tabix::reachable_chunks`, refusing when a `.csi` exists that htslib would prefer) and keeps
+  only the header and sequence names: 4 KB instead of 11.4 GiB, the same outputs (ClinVar
+  sample). Superseded for hg38 by the decision below; the option stays for such sources.
 - Decision (2026-10-01, user): hg38 uses the gnomAD genome data. Its lookup store is built from
   the data file with the rebuilt index (`aim-data/fixes/`), so `gnomADg_AF` and `AF_popmax` have
   values, and the Rust steps request the file's `nhomalt` (all ~76k v3.1.2 genomes, not a
   controls subset, so larger than hg19's `controls_nhomalt`), which `aim features` uses for
   `hom` when there is no `controls_nhomalt` column. hg38 results therefore differ from v1.1.3
   as deployed wherever a variant is in gnomAD genomes; hg19 is unchanged. This supersedes the
-  2026-09-28 decision below.
+  2026-09-28 decision below. The original Python/VEP path does the same: INDEX_GNOMAD_GENOMES
+  indexes the hg38 gnomAD file once (storeDir; the index is byte-identical to the rebuilt one)
+  unless a lookup store has gnomAD, VEP's `--custom` requests `nhomalt`, and `feature.py` takes
+  `gnomADg_nhomalt` for `hom` when there is no `controls_nhomalt` column.
   So on hg38, v1.1.3 as deployed gets no gnomAD genome AF and `hom` is always 0. The Rust port
   models data sources as configuration, so the v1.1.3 hg38 profile can say "no gnomAD genome
   source" instead of reproducing a broken index; the files in the bucket are left untouched.

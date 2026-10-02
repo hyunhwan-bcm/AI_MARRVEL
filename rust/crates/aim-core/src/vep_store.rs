@@ -372,6 +372,18 @@ pub fn build(source: &Path, out: &Path, opts: &BuildOptions) -> io::Result<Vec<B
         ));
     }
     if opts.no_records {
+        // the proof reads `<file>.tbi`; htslib would prefer a .csi, and also tries the name
+        // without .gz
+        let mut others = vec![format!("{}.csi", source.display())];
+        if let Some(stem) = source.to_str().and_then(|s| s.strip_suffix(".gz")) {
+            others.push(format!("{stem}.csi"));
+            others.push(format!("{stem}.tbi"));
+        }
+        if let Some(o) = others.iter().find(|o| Path::new(o).exists()) {
+            return Err(invalid(format!(
+                "{o}: another index htslib may use; --no-records checks only the .tbi"
+            )));
+        }
         let reachable = tbx.reachable_chunks()?;
         if !reachable.is_empty() {
             return Err(invalid(format!(

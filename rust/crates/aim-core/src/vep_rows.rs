@@ -39,6 +39,75 @@ fn number(parts: &[(i64, i64)], vf_start: i64, vf_end: i64) -> Option<String> {
     Some(format!("{n}/{}", parts.len()))
 }
 
+/// The miRNA column (`OutputFactory`, `--mirna`): the secondary-structure elements a small
+/// RNA's variant overlaps, from its `ncRNA` attribute `start:end structure` (structure runs
+/// written as `(5` for five `(`): `(` and `)` are `miRNA_stem`, `.` `miRNA_loop`, sorted and
+/// comma-joined with repeats kept. A position one past the structure reads Perl's undef,
+/// which prints as an empty element.
+fn mirna_structure(value: &str, cdna: (Option<i64>, Option<i64>)) -> Option<String> {
+    // `split /\s+|\:/` (trailing empty fields dropped)
+    let mut parts: Vec<&str> = value
+        .split(|c: char| c.is_whitespace() || c == ':')
+        .collect();
+    while parts.last() == Some(&"") {
+        parts.pop();
+    }
+    let num = |s: &str| crate::vep_annotate::perl_num(s) as i64;
+    let truthy = |s: &str| !s.is_empty() && s != "0";
+    let (start, end, structure) = (*parts.first()?, *parts.get(1)?, *parts.get(2)?);
+    let (cs, ce) = (cdna.0?, cdna.1?);
+    if !structure.contains(['(', '.', ')'])
+        || !truthy(start)
+        || !truthy(end)
+        || cs == 0
+        || ce == 0
+        || !overlap(num(start), num(end), cs, ce)
+    {
+        return None;
+    }
+    let (cs, ce) = if cs > ce { (ce, cs) } else { (cs, ce) };
+    // `m/([\.\(\)])([0-9]+)?/g`: a run count of 0 counts as 1
+    let mut elems: Vec<u8> = Vec::new();
+    let b = structure.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if !matches!(b[i], b'(' | b')' | b'.') {
+            i += 1;
+            continue;
+        }
+        let c = b[i];
+        let mut j = i + 1;
+        while j < b.len() && b[j].is_ascii_digit() {
+            j += 1;
+        }
+        let n = structure[i + 1..j].parse::<usize>().unwrap_or(0).max(1);
+        elems.extend(std::iter::repeat_n(c, n));
+        i = j;
+    }
+    let start = num(start);
+    let mut kinds: Vec<Option<u8>> = Vec::new();
+    for pos in cs..=ce {
+        let p = pos - start;
+        if p < 0 || p > elems.len() as i64 {
+            continue;
+        }
+        let k = elems.get(p as usize).copied();
+        if !kinds.contains(&k) {
+            kinds.push(k);
+        }
+    }
+    let mut terms: Vec<&str> = kinds
+        .iter()
+        .map(|k| match k {
+            Some(b'(') | Some(b')') => "miRNA_stem",
+            Some(_) => "miRNA_loop",
+            None => "",
+        })
+        .collect();
+    terms.sort_unstable();
+    Some(terms.join(","))
+}
+
 /// A row's columns (None prints as `-`).
 pub type Columns = Vec<(&'static str, Option<String>)>;
 
@@ -221,6 +290,13 @@ impl TranscriptAllele<'_> {
                         .replacen("alternative", "A", 1)
                 }),
         ));
+        out.push((
+            "miRNA",
+            ct.attributes
+                .iter()
+                .find(|(code, _)| code == "ncRNA")
+                .and_then(|(_, v)| mirna_structure(v, c.cdna)),
+        ));
         out.push(("CCDS", ct.ccds.clone()));
         out.push(("ENSP", ct.protein.clone()));
         out.push(("SWISSPROT", ct.swissprot.clone()));
@@ -293,5 +369,30 @@ mod tests {
         assert_eq!(number(&exons, 105, 305).as_deref(), Some("1-3/3"));
         // an insertion at an exon's edge is not in it
         assert_eq!(number(&exons, 110, 109), None);
+    }
+}
+
+#[cfg(test)]
+mod mirna_tests {
+    use super::mirna_structure;
+
+    #[test]
+    fn structure_elements_like_vep() {
+        // "(((..)))..": 3 stems, 2 loops, 3 stems, 2 loops, from cDNA 1
+        let v = "1:10\t(3.2)3.2";
+        assert_eq!(mirna_structure(v, (Some(4), Some(5))).as_deref(), Some("miRNA_loop"));
+        // both stem sides count once each
+        assert_eq!(
+            mirna_structure(v, (Some(3), Some(7))).as_deref(),
+            Some("miRNA_loop,miRNA_stem,miRNA_stem")
+        );
+        // one past the structure reads undef: an empty element
+        assert_eq!(mirna_structure(v, (Some(10), Some(11))).as_deref(), Some(",miRNA_loop"));
+        // an insertion (end before start) is swapped after the overlap test
+        assert_eq!(mirna_structure(v, (Some(2), Some(1))).as_deref(), Some("miRNA_stem"));
+        // outside, no cDNA position, or no structure
+        assert_eq!(mirna_structure(v, (Some(20), Some(21))), None);
+        assert_eq!(mirna_structure(v, (None, None)), None);
+        assert_eq!(mirna_structure("1:10", (Some(2), Some(2))), None);
     }
 }

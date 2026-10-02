@@ -141,15 +141,16 @@ process SPLIT_DATA {
         vep_revel_name="new_tabbed_revel_grch38.tsv.gz"
     fi
 
-    ln -s "./data_only_vep/vep/${params.ref_ver}/\${vep_gnomad_name}" .
-    ln -s "./data_only_vep/vep/${params.ref_ver}/\${vep_revel_name}" .
-    # SpliceAI, CADD and dbNSFP: a lookup store's copies (--vep_store) or the original files
-    large="${params.vep_store ?: ''}"
-    large=\${large:-./data_only_vep/vep/${params.ref_ver}}
-    ln -s "\$large/spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz" .
-    ln -s "\$large/spliceai_scores.masked.indel.${params.ref_ver}.vcf.gz" .
-    ln -s "\$large/\${vep_cadd_name}" .
-    ln -s "\$large/\${vep_dbnsfp_name}" .
+    # lookup files: a lookup store's copy (--vep_store) when it has one, else the original file
+    store="${params.vep_store ?: ''}"
+    for f in \${vep_gnomad_name} \${vep_revel_name} \${vep_cadd_name} \${vep_dbnsfp_name} \
+        spliceai_scores.masked.snv.${params.ref_ver}.vcf.gz spliceai_scores.masked.indel.${params.ref_ver}.vcf.gz; do
+        if [ -n "\$store" ] && [ -f "\$store/\$f/store.json" ]; then
+            ln -s "\$store/\$f" .
+        else
+            ln -s "./data_only_vep/vep/${params.ref_ver}/\$f" .
+        fi
+    done
 
     """
 }

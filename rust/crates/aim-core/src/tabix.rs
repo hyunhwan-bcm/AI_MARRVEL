@@ -139,6 +139,67 @@ impl Tabix {
         Some(hits)
     }
 
+    /// Index chunks a query could read records from: those that start at a real BGZF block
+    /// and whose first line is a record of the chunk's own sequence (a query reads only from
+    /// its first chunk when that fails or holds another sequence, as htslib does). Empty
+    /// means no query returns a record (the bucket's hg38 gnomAD file with its mismatched
+    /// `.tbi`). Tabix (`.tbi`) indexes only.
+    pub fn reachable_chunks(&mut self) -> io::Result<Vec<String>> {
+        let mut tbi = self.path.as_os_str().to_owned();
+        tbi.push(".tbi");
+        let index = noodles_tabix::fs::read(std::path::PathBuf::from(tbi))?;
+        // every BGZF block start of the data file
+        let mut blocks = std::collections::HashSet::new();
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = File::open(&self.path)?;
+            let mut pos = 0u64;
+            let mut h = [0u8; 18];
+            loop {
+                match f.read_exact(&mut h) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => return Err(e),
+                }
+                if h[..4] != [0x1f, 0x8b, 8, 4] || &h[12..14] != b"BC" {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("not a BGZF block at {pos}"),
+                    ));
+                }
+                blocks.insert(pos);
+                pos += u64::from(u16::from_le_bytes([h[16], h[17]])) + 1;
+                f.seek(SeekFrom::Start(pos))?;
+            }
+        }
+        let mut out = Vec::new();
+        let mut line = Vec::new();
+        for (tid, rs) in index.reference_sequences().iter().enumerate() {
+            for bin in rs.bins().values() {
+                for chunk in bin.chunks() {
+                    let start = chunk.start();
+                    if !blocks.contains(&start.compressed()) {
+                        continue;
+                    }
+                    self.reader.seek(start)?;
+                    line.clear();
+                    if self.reader.read_until(b'\n', &mut line).is_err() {
+                        continue;
+                    }
+                    while matches!(line.last(), Some(b'\n' | b'\r')) {
+                        line.pop();
+                    }
+                    if let Some((Some(rtid), _, _)) = self.layout.interval_of(&line) {
+                        if rtid == tid {
+                            out.push(format!("{}: chunk at {start:?}", self.layout.names[tid]));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Whether the index describes VCF records (else a generic table).
     pub fn is_vcf(&self) -> bool {
         matches!(self.layout.format, Format::Vcf)

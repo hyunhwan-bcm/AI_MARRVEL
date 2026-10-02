@@ -380,16 +380,25 @@ mod mirna_tests {
     fn structure_elements_like_vep() {
         // "(((..)))..": 3 stems, 2 loops, 3 stems, 2 loops, from cDNA 1
         let v = "1:10\t(3.2)3.2";
-        assert_eq!(mirna_structure(v, (Some(4), Some(5))).as_deref(), Some("miRNA_loop"));
+        assert_eq!(
+            mirna_structure(v, (Some(4), Some(5))).as_deref(),
+            Some("miRNA_loop")
+        );
         // both stem sides count once each
         assert_eq!(
             mirna_structure(v, (Some(3), Some(7))).as_deref(),
             Some("miRNA_loop,miRNA_stem,miRNA_stem")
         );
         // one past the structure reads undef: an empty element
-        assert_eq!(mirna_structure(v, (Some(10), Some(11))).as_deref(), Some(",miRNA_loop"));
+        assert_eq!(
+            mirna_structure(v, (Some(10), Some(11))).as_deref(),
+            Some(",miRNA_loop")
+        );
         // an insertion (end before start) is swapped after the overlap test
-        assert_eq!(mirna_structure(v, (Some(2), Some(1))).as_deref(), Some("miRNA_stem"));
+        assert_eq!(
+            mirna_structure(v, (Some(2), Some(1))).as_deref(),
+            Some("miRNA_stem")
+        );
         // outside, no cDNA position, or no structure
         assert_eq!(mirna_structure(v, (Some(20), Some(21))), None);
         assert_eq!(mirna_structure(v, (None, None)), None);

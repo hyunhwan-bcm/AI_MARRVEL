@@ -184,3 +184,9 @@ Tracking issue: [#35](https://github.com/hyunhwan-bcm/AI_MARRVEL/issues/35)
   - × No originals: with `--vep_store` PREPARE_DATA links the store under the original names; ClinVar sample on a data directory without them gives the same outputs; unsupported input (e.g. `<DEL>`) stops the task with a message (VEP's own lookups would need the originals)
   - – SVs in v1.1.3 (chr21 + one `<DEL>`): no lookup values (plugins skip structural variants), ranked last; new version with originals identical to v1.1.3 with and without it
   - o Decision (user): remove structural variants with `--vep_store` (FILTER_UNPASSED, `bin/drop_structural.awk`); store-only run with the `<DEL>` = v1.1.3 without it; other predictions unchanged, tied-last ranks and tier counts shift
+- × hg19 through the Rust path (`--rust --rust_vep` on GRCh37) and its store
+  - ! the GRCh37 cache has `ncRNA`/`miRNA` transcript attributes (GRCh38's none): ported the miRNA column and `mature_miRNA_variant` (which suppresses the non-coding terms); 2,400 miRNA-focused variants, 16,997 rows identical to VEP
+  - – ClinVar sample on GRCh37 (same 1,450 variants) and GIAB HG002 GRCh37 vs the original pipeline: VEP tables identical but SIFT/PolyPhen/DOMAINS and 30 `HGNC_ID`; predictions identical (HG002: 15 diffusion cells); HG002 12 min 22 s vs 16 min 35 s
+  - – hg19 store 35.7 GiB (CADD 23.0, SpliceAI 9.0, dbNSFP 4.3a 3.7) from 203.6 GiB; gnomAD r2.1 3.4 from 5.3
+- ! hg38 gnomAD index proven to return no record for any query (4 of 36,283 chunks start at real blocks: header text or chr1 records under chr9/10/21 chunks); `aim store build --no-records` checks this
+- o Decision (user): hg38 uses gnomAD genomes: store from the rebuilt index (8.9 GiB), `hom` from `nhomalt`; ClinVar sample: 600 variants gain real AF, 520 predictions change (4 by > 0.05), top 20 the same set

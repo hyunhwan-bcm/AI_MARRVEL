@@ -504,7 +504,9 @@ process ANNOTATE_BY_VEP {
         --cache --offline --tab --force_overwrite \\
         --species homo_sapiens --assembly ${ref_assembly} \\
         --af_gnomad --individual all --input_file $vcf --buffer_size \$bs"""
-    def vep_lookups = """--custom ${vep_custom_gnomad},gnomADg,vcf,exact,0,AF,AF_popmax,controls_nhomalt \\
+    // gnomAD genomes: hg38's file (v3.1.2) has nhomalt, not controls_nhomalt; the Rust steps use it
+    def gnomad_fields = params.ref_ver == 'hg38' ? 'AF,AF_popmax,nhomalt' : 'AF,AF_popmax,controls_nhomalt'
+    def vep_lookups = """--custom ${vep_custom_gnomad},gnomADg,vcf,exact,0,${gnomad_fields} \\
         --custom ${vep_custom_clinvar},clinvar,vcf,exact,0,CLNREVSTAT,CLNSIG,CLNSIGCONF \\
         --custom ${vep_custom_hgmd},hgmd,vcf,exact,0,CLASS,GENE,PHEN,RANKSCORE \\
         --plugin REVEL,${vep_plugin_revel},ALL \\

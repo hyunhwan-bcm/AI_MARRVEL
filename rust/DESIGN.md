@@ -109,6 +109,17 @@ which depend on the chromosomes' merge order and differ between runs without the
 - On macOS a build's resident memory includes up to ~1.6 GB of freed blocks the allocator
   caches (`MallocLargeCache=0` shows ~80 MB for a dbNSFP build).
 
+- hg19 (2026-10-01): the Rust VEP paths run on GRCh37 too. The GRCh37 cache has the `ncRNA`
+  (secondary structure) and `miRNA` (mature product) transcript attributes the GRCh38 cache
+  lacks: the `miRNA` column and `mature_miRNA_variant`, which also suppresses
+  `non_coding_transcript_exon_variant` and `non_coding_transcript_variant`, follow VEP
+  (`OutputFactory`, `within_mature_miRNA`; 2,400 variants at mature miRNAs and structured small
+  RNAs, 16,997 rows identical). Checked against the original pipeline on the ClinVar sample
+  (the same 1,450 ClinVar variants on GRCh37) and GIAB HG002 GRCh37: VEP tables identical but
+  SIFT/PolyPhen/DOMAINS and 30 `HGNC_ID` cells; predictions of all four models identical
+  (HG002: 15 `diffuse_Phrank_STRING` cells, the accepted precision noise). dbNSFP 4.3a has 643
+  columns, so the hg19 VEP table is ~735 columns wide (pandas chunks of 1,024 rows).
+
 ## Findings that affect "identical"
 
 - ANNOTATE_BY_VEP runs VEP with `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0` (#54), so its output is
@@ -249,8 +260,22 @@ which depend on the chromosomes' merge order and differ between runs without the
   as row sets, but for 1-ulp noise in one imputed column that two VEP-based runs show too.
 
 - The published hg38 gnomAD genome index (`vep/hg38/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz.tbi`)
-  does not match its data file (every lookup fails with "Invalid BGZF header"; a freshly built
-  index works), and that file names the field `nhomalt` while AIM requests `controls_nhomalt`.
+  does not match its data file (a freshly built index works), and that file names the field
+  `nhomalt` while AIM requests `controls_nhomalt`. Proven (2026-10-01) that no query returns a
+  record: a query reads from its first index chunk only when that chunk starts at a real BGZF
+  block and its first line is a record of the queried sequence. 36,279 of the 36,283 chunk
+  starts are not block starts (BGZF error); block 0 (chr1, chrY chunks) starts with header
+  text; the other three blocks hold chr1 records but belong to chr9, chr10 and chr21 chunks, and
+  every chunk start in them is mid-line. `aim store build --no-records` checks exactly this
+  (`Tabix::reachable_chunks`) and keeps only the header and sequence names: 4 KB instead of
+  11.4 GiB, the same outputs (ClinVar sample).
+- Decision (2026-10-01, user): hg38 uses the gnomAD genome data. Its lookup store is built from
+  the data file with the rebuilt index (`aim-data/fixes/`), so `gnomADg_AF` and `AF_popmax` have
+  values, and the Rust steps request the file's `nhomalt` (all ~76k v3.1.2 genomes, not a
+  controls subset, so larger than hg19's `controls_nhomalt`), which `aim features` uses for
+  `hom` when there is no `controls_nhomalt` column. hg38 results therefore differ from v1.1.3
+  as deployed wherever a variant is in gnomAD genomes; hg19 is unchanged. This supersedes the
+  2026-09-28 decision below.
   So on hg38, v1.1.3 as deployed gets no gnomAD genome AF and `hom` is always 0. The Rust port
   models data sources as configuration, so the v1.1.3 hg38 profile can say "no gnomAD genome
   source" instead of reproducing a broken index; the files in the bucket are left untouched.
@@ -273,7 +298,7 @@ which depend on the chromosomes' merge order and differ between runs without the
   and is exact only for one BLAS build, so the original itself likely differs between arm64
   macOS and x86-64 Linux (not checked). `diffusion.rs` sums each row in f64 and rounds once.
 
-- Decision (2026-09-28): `hom` (gnomAD genome homozygote count) stays 0 on hg38, in both the
+- Decision (2026-09-28, superseded 2026-10-01: hg38 now uses `nhomalt`): `hom` (gnomAD genome homozygote count) stays 0 on hg38, in both the
   as-deployed and corrected profiles. The hg38 file only has `nhomalt` (all samples), not the
   `controls_nhomalt` the pipeline requests; the closest v3 field, `nhomalt_controls_and_biobanks`,
   needs ~2.3 TiB of gnomAD downloads, judged too costly. hg38 predictions therefore never use

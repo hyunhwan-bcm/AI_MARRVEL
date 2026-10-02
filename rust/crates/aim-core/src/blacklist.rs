@@ -381,6 +381,17 @@ fn list_records(
         if pos < start || pos > end {
             continue;
         }
+        // a symbolic ALT's key carries INFO END as htslib types it from the header, which a
+        // store without INFO lacks; gnomAD's lists have none
+        if f[4].split(',').any(|a| a.starts_with('<')) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "{name}: a symbolic ALT at {chr}:{pos} ({}), not supported",
+                    f[4]
+                ),
+            ));
+        }
         let info = f.get(7).copied().unwrap_or("");
         by_pos
             .entry(pos)
@@ -408,8 +419,8 @@ pub fn remove_blacklisted<R: BufRead, W: Write>(
     mut out: W,
 ) -> io::Result<Counts> {
     let mut counts = Counts::default();
-    // a batch: input records of one sequence, (position, line)
-    let mut batch: Vec<(i64, String)> = Vec::new();
+    // a batch: input records of one sequence, (position, line); lines are bytes, written as read
+    let mut batch: Vec<(i64, Vec<u8>)> = Vec::new();
     let mut batch_chr = String::new();
     let mut done: HashSet<String> = HashSet::new();
     let unsorted = |what: String| {
@@ -418,7 +429,7 @@ pub fn remove_blacklisted<R: BufRead, W: Write>(
             format!("input not sorted: {what}"),
         )
     };
-    let mut flush = |chr: &str, batch: &mut Vec<(i64, String)>, out: &mut W| -> io::Result<u64> {
+    let mut flush = |chr: &str, batch: &mut Vec<(i64, Vec<u8>)>, out: &mut W| -> io::Result<u64> {
         if batch.is_empty() {
             return Ok(0);
         }
@@ -436,8 +447,12 @@ pub fn remove_blacklisted<R: BufRead, W: Write>(
             let keys: Vec<Key> = batch[i..j]
                 .iter()
                 .map(|(_, l)| {
-                    let f: Vec<&str> = l.splitn(9, '\t').collect();
-                    Key::new(f[3], f[4], f.get(7).copied().unwrap_or(""))
+                    let f: Vec<String> = l
+                        .splitn(9, |&c| c == b'\t')
+                        .take(8)
+                        .map(|x| String::from_utf8_lossy(x).into_owned())
+                        .collect();
+                    Key::new(&f[3], &f[4], f.get(7).map_or("", |s| s.as_str()))
                 })
                 .collect();
             let none = Vec::new();
@@ -447,7 +462,7 @@ pub fn remove_blacklisted<R: BufRead, W: Write>(
                 e.get(&pos).unwrap_or(&none),
             );
             for k in kept {
-                out.write_all(batch[i + k].1.as_bytes())?;
+                out.write_all(&batch[i + k].1)?;
                 out.write_all(b"\n")?;
                 written += 1;
             }
@@ -456,28 +471,43 @@ pub fn remove_blacklisted<R: BufRead, W: Write>(
         batch.clear();
         Ok(written)
     };
-    for line in input.lines() {
-        let line = line?;
-        if line.starts_with('#') {
-            if line.starts_with("#CHROM") {
+    let mut input = input;
+    loop {
+        let mut line = Vec::new();
+        if input.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.starts_with(b"#") {
+            if line.starts_with(b"#CHROM") {
                 for h in header_lines {
                     writeln!(out, "{h}")?;
                 }
             }
-            writeln!(out, "{line}")?;
+            out.write_all(&line)?;
+            out.write_all(b"\n")?;
             continue;
         }
-        let mut f = line.splitn(6, '\t');
-        let chr = f.next().unwrap_or("");
-        let pos: i64 = f.next().and_then(|p| p.parse().ok()).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("input record: {line}"))
-        })?;
-        if f.nth(2).is_none() {
-            return Err(io::Error::new(
+        let bad = |what: &str| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("input record with fewer than 5 fields: {line}"),
-            ));
+                format!("input record {what}: {}", String::from_utf8_lossy(&line)),
+            )
+        };
+        let mut f = line.splitn(6, |&c| c == b'\t');
+        let chr = std::str::from_utf8(f.next().unwrap_or_default())
+            .map_err(|_| bad("with a sequence name not in UTF-8"))?
+            .to_owned();
+        let pos: i64 = f
+            .next()
+            .and_then(|p| std::str::from_utf8(p).ok()?.parse().ok())
+            .ok_or_else(|| bad("without a position"))?;
+        if f.nth(2).is_none() {
+            return Err(bad("with fewer than 5 fields"));
         }
+        let chr = chr.as_str();
         counts.read += 1;
         // isec reads the input by sequence through its index, which needs it sorted
         if chr != batch_chr {

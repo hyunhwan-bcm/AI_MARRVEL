@@ -4,6 +4,7 @@
 #   sh rust/tools/make_goldens_blacklist.sh rust/tests/golden/blacklist
 # needs bcftools, bgzip and tabix 1.20 (the baseline's pixi env "tools") and python3.
 set -eu
+bcftools --version | head -1 | grep -qx 'bcftools 1.20' || { echo "needs bcftools 1.20" >&2; exit 1; }
 out=$1
 mkdir -p "$out"
 cd "$out"
@@ -16,7 +17,8 @@ header() {
     printf '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n'
 }
 
-# crafted: one rule of the pairing per position (INFO X names it)
+# crafted: one rule of the pairing per position (INFO X names it); the lists have no symbolic
+# ALTs, as gnomAD's (aim refuses them), the input does
 { header; cat <<'EOF'
 1	100	a1	A	C	50	PASS	X=snv_listed
 1	200	a2	A	G	50	PASS	X=other_alt
@@ -73,7 +75,6 @@ EOF
 1	900	.	A	C	10000	.	.
 1	1000	.	A	C	10000	.	.
 1	1200	.	A	C	10000	.	.
-1	1300	.	A	<DEL>	10000	.	.
 1	1400	.	A	*	10000	.	.
 1	1500	.	A	C	10000	.	.
 1	1600	.	A	C	10000	.	.
@@ -83,9 +84,6 @@ EOF
 1	1800	.	A	C	10000	.	.
 1	2000	.	A	C,G	10000	.	.
 1	2100	.	a	c	10000	.	.
-1	2300	.	A	<DEL>	10000	.	END=2500
-1	2310	.	A	<DEL>	10000	.	END=2600
-1	2320	.	A	<DEL>	10000	.	.
 1	2400	.	A	.	10000	.	.
 1	2500	.	AC	A	10000	.	.
 1	2500	.	AC	A	10000	.	.
@@ -103,14 +101,16 @@ EOF
 1	2700	.	A	G	10000	.	.
 EOF
 } > crafted.exomes.vcf
+# a list with a symbolic ALT, which aim refuses (its key would need INFO END as htslib types it)
+{ header; printf '1\t1300\t.\tA\t<DEL>\t10000\t.\t.\n'; } > symbolic.genomes.vcf
 
 # random: few positions, few alleles, copies, multi-allelic records, lower case and END
 python3 - <<'EOF'
 import random
 random.seed(66)
-def alleles():
+def alleles(symbolic):
     ref = random.choice(["A", "A", "AC", "a", "ACG"])
-    pool = ["C", "G", "T", "c", "<DEL>", "*", ref[0], ref[0] + "T"]
+    pool = ["C", "G", "T", "c", "*", ref[0], ref[0] + "T"] + (["<DEL>"] if symbolic else [])
     alts = random.sample(pool, random.choice([1, 1, 1, 2, 3]))
     if random.random() < 0.05:
         alts = ["."]
@@ -119,11 +119,11 @@ def info(alt, tag):
     if "<" in alt and random.random() < 0.7:
         return f"X={tag};END={random.choice([1300, 1301])}"
     return f"X={tag}"
-def records(n, tag):
+def records(n, tag, symbolic):
     rows = []
     for i in range(n):
         pos = random.randint(1, 120) * 10
-        ref, alt = alleles()
+        ref, alt = alleles(symbolic)
         rows.append((pos, ref, alt))
         while random.random() < 0.3:  # copies, adjacent or not
             rows.append(random.choice(rows))
@@ -133,7 +133,7 @@ head = open("crafted.vcf").read().split("1\t100\t")[0]
 for name, n, qual in [("random", 900, "50"), ("random.genomes", 500, "10000"), ("random.exomes", 300, "10000")]:
     with open(name + ".vcf", "w") as f:
         f.write(head)
-        for p, i, r, a in records(n, name[:2]):
+        for p, i, r, a in records(n, name[:2], name == "random"):
             f.write(f"1\t{p}\t{i}\t{r}\t{a}\t{qual}\tPASS\t{info(a, i)}\n")
 
 # shuffled: lists made of input records with their ALTs reordered, their case changed and copies,
@@ -167,7 +167,7 @@ for name in ["shuffled.genomes", "shuffled.exomes"]:
             f.write(f"1\t{p}\t.\t{r}\t{','.join(a)}\t10000\t.\t.\n")
 EOF
 
-for f in crafted crafted.genomes crafted.exomes random random.genomes random.exomes \
+for f in crafted crafted.genomes crafted.exomes symbolic.genomes random random.genomes random.exomes \
     shuffled shuffled.genomes shuffled.exomes; do
     bgzip -f "$f.vcf"
     tabix -f -p vcf "$f.vcf.gz"

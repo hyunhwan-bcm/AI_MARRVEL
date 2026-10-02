@@ -93,10 +93,10 @@ which depend on the chromosomes' merge order and differ between runs without the
   from a rebuilt index.
 - ClinVar and gnomAD's blacklists (2026-10-02, at the user's request "replace with the
   parquet"): stores too, for both assemblies. ClinVar is a `--custom` lookup like gnomAD
-  (QUAL and FILTER left out: 39 MB instead of 56 MB). The blacklists are FILTER_PROBAND's input:
+  (QUAL and FILTER left out: 41 MB instead of 59 MB). The blacklists are FILTER_PROBAND's input:
   its three `bcftools isec` calls keep the input's records that neither list has. With `--rust`,
   `aim blacklist` (`blacklist.rs`) does those calls on the VCFs or the stores, which keep only
-  positions and alleles (genomes 79 MB instead of 124 MB on hg38, 70 instead of 115 on hg19).
+  positions and alleles (genomes 80 MB instead of 130 MB on hg38, 71 instead of 121 on hg19).
   It ports htslib 1.20's pairing (`bcf_sr_sort.c` with isec's default `-c none`), quirks
   included: records pair on the same `REF>ALT` list in any order and case; the k-th copy of a
   record pairs with the k-th copy, so step 3 can keep a copy the exome list took; and a
@@ -105,7 +105,9 @@ which depend on the chromosomes' merge order and differ between runs without the
   1.20), and HG002 and the ClinVar sample on both assemblies, lists as VCFs and as stores:
   the same records in the same order as bcftools. HG002: 15-18 s and under 75 MB instead of
   70 s. Only the `##` lines bcftools adds (`bcftools_isecVersion`, `bcftools_isecCommand` with
-  the date) become aim's own. End to end with `--vep_store` (ClinVar sample and HG002, both
+  the date) become aim's own. A list record with a symbolic ALT is refused: htslib adds its
+  INFO `END` to the key, typed by the header (undeclared, `END=.`), which a store without INFO
+  cannot give; gnomAD's lists have none. Lines are read and written as bytes. End to end with `--vep_store` (ClinVar sample and HG002, both
   assemblies): VEP tables, `scores.txt` and the four models' predictions the same as before but
   the merge-order noise in the last digit; HG002 6 min 18 s (hg38) and 6 min 14 s (hg19) instead
   of 6 min 52 s and 7 min 21 s.

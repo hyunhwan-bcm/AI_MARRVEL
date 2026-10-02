@@ -91,9 +91,9 @@ fn lists_as_stores() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for case in ["crafted", "random", "shuffled"] {
-        // as the pipeline's stores: no ID, QUAL or FILTER
+        // as the pipeline's stores (rust/README.md): positions and alleles only
         let opts = BuildOptions {
-            drop_columns: vec!["ID".into(), "QUAL".into(), "FILTER".into()],
+            drop_columns: vec!["ID".into(), "QUAL".into(), "FILTER".into(), "INFO".into()],
             ..BuildOptions::default()
         };
         let mut lists = Vec::new();
@@ -122,4 +122,26 @@ fn unsorted_input_refused() {
             remove_blacklisted(input.as_bytes(), &mut g, &mut e, &[], Vec::new()).unwrap_err();
         assert!(err.to_string().contains("not sorted"), "{err}");
     }
+}
+
+#[test]
+fn symbolic_list_refused() {
+    let mut g = Source::open(&data().join("symbolic.genomes.vcf.gz")).unwrap();
+    let mut e = Source::open(&data().join("crafted.exomes.vcf.gz")).unwrap();
+    let err = remove_blacklisted(input("crafted"), &mut g, &mut e, &[], Vec::new()).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported, "{err}");
+}
+
+#[test]
+fn bytes_kept() {
+    // a header line not in UTF-8 passes through, as bcftools passes it
+    let mut g = Source::open(&data().join("crafted.genomes.vcf.gz")).unwrap();
+    let mut e = Source::open(&data().join("crafted.exomes.vcf.gz")).unwrap();
+    let mut input = b"##source=caf\xe9\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n".to_vec();
+    input.extend_from_slice(b"1\t100\t.\tA\tC\t.\t.\t.\n1\t200\t.\tA\tG\t.\t.\t.\n");
+    let mut out = Vec::new();
+    remove_blacklisted(&input[..], &mut g, &mut e, &[], &mut out).unwrap();
+    let mut want = b"##source=caf\xe9\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n".to_vec();
+    want.extend_from_slice(b"1\t200\t.\tA\tG\t.\t.\t.\n");
+    assert_eq!(out, want);
 }

@@ -86,7 +86,9 @@ nextflow run main.nf ... --ref_ver hg19 --rust true --rust_vep true --vep_store 
 The pipeline takes a store's copy of any lookup file it has (gnomAD, ClinVar, REVEL, CADD,
 dbNSFP, SpliceAI, and the blacklists) and the original otherwise; CADD, SpliceAI and dbNSFP
 must be in the store. The ClinVar and blacklist stores are about two thirds of the files' size
-(ClinVar 39 MB, the blacklists 79 MB and 1.3 MB per assembly).
+(ClinVar 41 MB instead of 59, the genome blacklist 80/71 MB instead of 130/121 on hg38/hg19,
+the exome blacklist 1.3/1.1 MB instead of 1.8). `aim blacklist` refuses a blacklist record
+with a symbolic ALT (gnomAD's have none), whose pairing would need its INFO.
 
 With `--vep_store` the pipeline does not read the original files the store has copies of,
 so they can be removed from the data directory. Structural variants (symbolic ALT alleles such

@@ -6,13 +6,16 @@
 1	900	b1	A	G	50	PASS	X=pos900_unlisted
 1	900	b3	AT	A	50	PASS	X=pos900_del_unlisted
 1	1000	b4	A	.	50	PASS	X=ref_only_vs_snv
+1	1300	b7	A	<DEL>	50	PASS	X=symbolic
 1	1700	c2	G	A	50	PASS	X=ref_differs
 1	2000	s	A	T	50	PASS	X=order_s
 1	2000	p	A	G,C	50	PASS	X=order_p
 1	2100	r1	A	C	50	PASS	X=upper_unlisted
 1	2200	d1	A	C	50	PASS	X=copy1
 1	2200	d2	A	C	50	PASS	X=copy2
+1	2300	e1	A	<DEL>	50	PASS	X=sym_end_same;END=2500
 1	2310	e2	A	<DEL>	50	PASS	X=sym_end_differs;END=2500
+1	2320	e3	A	<DEL>	50	PASS	X=sym_no_end
 1	2600	h2	A	T,C	50	PASS	X=step3_2
 1	2700	k1	ACGT	A	50	PASS	X=unlisted
 2	100	c4	A	C	50	PASS	X=sequence_not_listed

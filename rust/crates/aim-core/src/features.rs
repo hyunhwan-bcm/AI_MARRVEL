@@ -459,6 +459,7 @@ const VEP_COLS: &[&str] = &[
     "ESP6500_EA_AF",
     "VARIANT_CLASS",
     "gnomADg_controls_nhomalt",
+    "gnomADg_nhomalt",
     "hgmd",
     "hgmd_GENE",
     "hgmd_RANKSCORE",
@@ -873,6 +874,13 @@ pub fn features(
                 Py::str("-")
             },
         );
+        // hom: gnomAD's controls homozygote count; the hg38 genome file (gnomAD v3.1.2) has no
+        // controls count, and the Rust pipeline requests its nhomalt instead (rust/DESIGN.md)
+        let hom_col = if vep.has("gnomADg_controls_nhomalt") {
+            "gnomADg_controls_nhomalt"
+        } else {
+            "gnomADg_nhomalt"
+        };
         for (out, col) in [
             ("geneSymbol", "SYMBOL"),
             ("geneEnsId", "Gene"),
@@ -903,7 +911,7 @@ pub fn features(
             ("Consequence", "Consequence"),
             ("HGVSc", "HGVSc"),
             ("HGVSp", "HGVSp"),
-            ("hom", "gnomADg_controls_nhomalt"),
+            ("hom", hom_col),
             ("hgmd_id", "hgmd"),
             ("hgmd_rs", "hgmd_RANKSCORE"),
             ("hgmd_CLASS", "hgmd_CLASS"),

@@ -95,11 +95,11 @@
         },
         "rust_vep": {
           "type": "boolean",
-          "description": "With --rust on hg38: run `aim vep` instead of VEP in ANNOTATE_BY_VEP (rows, consequences, HGVS, known variants and regulatory rows from the VEP cache; VEP's SIFT/PolyPhen/DOMAINS columns stay empty). Input it does not reproduce falls back to VEP."
+          "description": "With --rust: run `aim vep` instead of VEP in ANNOTATE_BY_VEP (rows, consequences, HGVS, known variants and regulatory rows from the VEP cache; VEP's SIFT/PolyPhen/DOMAINS columns stay empty). Input it does not reproduce falls back to VEP."
         },
         "vep_store": {
           "type": "string",
-          "description": "With --rust on hg38: an absolute path to a lookup store from `aim store build`, holding copies of the CADD, SpliceAI and dbNSFP files under their file names, which replace those files (the originals are then not read; structural variants are removed from the input)."
+          "description": "With --rust: an absolute path to a lookup store from `aim store build`, holding copies of the CADD, SpliceAI and dbNSFP files under their file names, which replace those files (the originals are then not read; structural variants are removed from the input)."
         },
         "aim_bin": {
           "type": "string",

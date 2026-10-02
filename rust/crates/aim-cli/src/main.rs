@@ -270,6 +270,10 @@ enum StoreCmd {
         /// SpliceAI VCFs: keep SYMBOL and the four delta scores, not the four delta positions
         #[arg(long)]
         drop_spliceai_positions: bool,
+        /// keep no records, only the header and sequence names, for a source no query returns
+        /// records from (refused unless the index proves it, e.g. a .tbi that does not match)
+        #[arg(long)]
+        no_records: bool,
         /// zstd compression level
         #[arg(long, default_value_t = 9)]
         zstd_level: i32,
@@ -721,6 +725,7 @@ fn run(cli: Cli) -> Result<()> {
                     drop_column,
                     keep_columns,
                     drop_spliceai_positions,
+                    no_records,
                     zstd_level,
                     threads,
                 },
@@ -731,6 +736,7 @@ fn run(cli: Cli) -> Result<()> {
                 drop_spliceai_positions,
                 zstd_level: Some(zstd_level),
                 threads,
+                no_records,
             };
             let built = aim_core::vep_store::build(&source, &out, &opts)?;
             let rows: u64 = built.iter().map(|s| s.rows).sum();

@@ -19,7 +19,7 @@ cd rust && cargo test --release -- --include-ignored
 ## Running the pipeline with the Rust steps
 
 `--rust true` swaps PHRANK_SCORING, HPO_SIM, ANNOTATE_BY_MODULES, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION for
-the `aim` binary, and on hg38 moves ANNOTATE_BY_VEP's `--custom` and plugin lookups (gnomAD,
+the `aim` binary, and moves ANNOTATE_BY_VEP's `--custom` and plugin lookups (gnomAD,
 ClinVar, HGMD, REVEL, SpliceAI, CADD, dbNSFP) from VEP to `aim vep-annotate`; VEP still computes
 the rows and consequences (default off; the other steps are unchanged). With `--rust_vep true`
 as well, ANNOTATE_BY_VEP runs `aim vep` instead of VEP: rows, consequences, HGVS, known
@@ -43,7 +43,7 @@ the merged row order follows Nextflow's chromosome completion order in both vers
 per chromosome, keeping only the fields AIM reads if asked. `aim vep` and `aim vep-annotate`
 read a store directory wherever the file is given and return the same records (`aim store
 check` compares the two); the original files are left as they are. For hg38, as AIM uses them
-(36.3 GiB instead of 202 GiB):
+(36.3 GiB instead of 202 GiB; gnomAD below):
 
 ```bash
 D=<data>/vep/hg38; S=<store>          # S: a new directory for the store
@@ -52,10 +52,32 @@ aim store build $D/spliceai_scores.masked.snv.hg38.vcf.gz --out $S/spliceai_scor
 aim store build $D/spliceai_scores.masked.indel.hg38.vcf.gz --out $S/spliceai_scores.masked.indel.hg38.vcf.gz --drop-spliceai-positions
 aim store build $D/dbNSFP4.1a_grch38.gz --out $S/dbNSFP4.1a_grch38.gz --keep-columns \
   'pos(1-based),alt,aaref,aaalt,GERP++_RS,GERP++_NR,LRT_Omega,LRT_score,phyloP100way_vertebrate,DANN_score,FATHMM_pred,FATHMM_score,GTEx_V8_gene,GTEx_V8_tissue,Polyphen2_HDIV_score,Polyphen2_HVAR_score,REVEL_score,SIFT_score,clinvar_clnsig,fathmm-MKL_coding_score,M-CAP_score,MutationAssessor_score,MutationTaster_score,ESP6500_AA_AC,ESP6500_AA_AF,ESP6500_EA_AC,ESP6500_EA_AF,CADD_phred'
+# gnomAD genomes: hg38's bucket index does not match its file; build from a rebuilt index
+# (tabix -p vcf on a copy, or aim-data/fixes/) so its records are used (rust/DESIGN.md)
+aim store build $D/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz --out $S/gnomad.genomes.GRCh38.v3.1.2.sites.vcf.gz \
+  --drop-column QUAL --drop-column FILTER
 nextflow run main.nf ... --rust true --rust_vep true --vep_store $S   # an absolute path
 ```
 
-With `--vep_store` the pipeline does not read the original CADD, SpliceAI and dbNSFP files,
+hg19 the same way (35.7 GiB instead of 203.6 GiB, plus gnomAD 3.4 GiB instead of 5.3 GiB),
+with dbNSFP 4.3a matched on its `hg19_pos(1-based)` column:
+
+```bash
+D=<data>/vep/hg19; S=<store-hg19>
+aim store build $D/hg19_whole_genome_SNVs.tsv.gz --out $S/hg19_whole_genome_SNVs.tsv.gz --drop-column RawScore
+aim store build $D/spliceai_scores.masked.snv.hg19.vcf.gz --out $S/spliceai_scores.masked.snv.hg19.vcf.gz --drop-spliceai-positions
+aim store build $D/spliceai_scores.masked.indel.hg19.vcf.gz --out $S/spliceai_scores.masked.indel.hg19.vcf.gz --drop-spliceai-positions
+aim store build $D/dbNSFP4.3a_grch37.gz --out $S/dbNSFP4.3a_grch37.gz --keep-columns \
+  'alt,aaref,aaalt,GERP++_RS,GERP++_NR,LRT_Omega,LRT_score,phyloP100way_vertebrate,DANN_score,FATHMM_pred,FATHMM_score,GTEx_V8_gene,GTEx_V8_tissue,Polyphen2_HDIV_score,Polyphen2_HVAR_score,REVEL_score,SIFT_score,clinvar_clnsig,fathmm-MKL_coding_score,M-CAP_score,MutationAssessor_score,MutationTaster_score,ESP6500_AA_AC,ESP6500_AA_AF,ESP6500_EA_AC,ESP6500_EA_AF,CADD_phred'
+aim store build $D/gnomad.genomes.r2.1.sites.grch37_noVEP.vcf.gz --out $S/gnomad.genomes.r2.1.sites.grch37_noVEP.vcf.gz \
+  --drop-column QUAL --drop-column FILTER
+nextflow run main.nf ... --ref_ver hg19 --rust true --rust_vep true --vep_store $S
+```
+
+The pipeline takes a store's copy of any lookup file it has (gnomAD, REVEL, CADD, dbNSFP,
+SpliceAI) and the original otherwise; CADD, SpliceAI and dbNSFP must be in the store.
+
+With `--vep_store` the pipeline does not read the original files the store has copies of,
 so they can be removed from the data directory. Structural variants (symbolic ALT alleles such
 as `<DEL>`) are then removed from the input, since their lookups would need VEP and the original
 files; the rest of the output is as if the input had none (rust/DESIGN.md).

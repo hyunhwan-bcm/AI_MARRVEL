@@ -81,6 +81,9 @@ struct Manifest {
     spliceai_parts: Option<usize>,
     /// fields other than the sequence, position and (VCF) REF kept together in `rest`
     packed: bool,
+    /// a source no query returns records from (`--no-records`): only its header and names
+    #[serde(default)]
+    no_records: bool,
     /// the index's sequence names, in order
     seqnames: Vec<String>,
     seqs: Vec<SeqEntry>,
@@ -261,6 +264,10 @@ pub struct BuildOptions {
     pub zstd_level: Option<i32>,
     /// threads, one sequence each (0: one per core)
     pub threads: usize,
+    /// keep no records, only the header and sequence names: for a source no query returns
+    /// records from (checked: [`Tabix::reachable_chunks`]), such as a file whose index does
+    /// not match it
+    pub no_records: bool,
 }
 
 /// Rows written for one sequence.
@@ -355,6 +362,7 @@ pub fn build(source: &Path, out: &Path, opts: &BuildOptions) -> io::Result<Vec<B
         dropped,
         spliceai_parts: spliceai.then_some(if opts.drop_spliceai_positions { 6 } else { 10 }),
         packed,
+        no_records: opts.no_records,
         seqnames: tbx.seqnames().to_vec(),
         seqs: Vec::new(),
     };
@@ -363,12 +371,31 @@ pub fn build(source: &Path, out: &Path, opts: &BuildOptions) -> io::Result<Vec<B
             "SpliceAI's INFO is split: its ALT and INFO cannot be dropped",
         ));
     }
+    if opts.no_records {
+        let reachable = tbx.reachable_chunks()?;
+        if !reachable.is_empty() {
+            return Err(invalid(format!(
+                "{}: queries can return records ({}, ...); --no-records would drop them",
+                source.display(),
+                reachable[0]
+            )));
+        }
+    }
     std::fs::create_dir(out).map_err(|e| {
         io::Error::new(
             e.kind(),
             format!("{}: {e} (a store is never overwritten)", out.display()),
         )
     })?;
+    if opts.no_records {
+        let tmp = out.join(format!("{MANIFEST}.tmp"));
+        std::fs::write(
+            &tmp,
+            serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?,
+        )?;
+        std::fs::rename(&tmp, out.join(MANIFEST))?;
+        return Ok(Vec::new());
+    }
     let level = opts.zstd_level.unwrap_or(9);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(opts.threads)
@@ -1248,6 +1275,31 @@ pub fn check(source: &Path, store: &Path, n: usize, seed: u64) -> io::Result<Che
         rng.wrapping_mul(0x2545_f491_4f6c_dd1d)
     };
     let mut buf = Vec::new();
+    if m.no_records {
+        // the source must return nothing anywhere: random regions of up to 250 Mb positions
+        for name in &m.seqnames {
+            for _ in 0..n {
+                let start = 1 + (next() % 250_000_000) as i64;
+                let end = start + (next() % 100) as i64;
+                rep.queries += 1;
+                let lines = t
+                    .query(name, start, end)
+                    .map(|h| h.lines)
+                    .unwrap_or_default();
+                if !lines.is_empty()
+                    || s.query(name, start, end)
+                        .is_some_and(|h| !h.lines.is_empty())
+                {
+                    rep.mismatches += 1;
+                    if rep.examples.len() < 5 {
+                        rep.examples
+                            .push(format!("{name}:{start}-{end}: {} records", lines.len()));
+                    }
+                }
+            }
+        }
+        return Ok(rep);
+    }
     for e in &m.seqs {
         // the sequence's extent, from the store's pages
         let f = s
@@ -1289,6 +1341,7 @@ pub fn check(source: &Path, store: &Path, n: usize, seed: u64) -> io::Result<Che
         rep.store_secs += clock.elapsed().as_secs_f64();
         for ((w, g), (a, b)) in want.into_iter().zip(got).zip(&regions) {
             rep.queries += 1;
+            // a tabix read error means no records (as in VEP), as a store returns
             let w = w.map(|h| {
                 let lines: Vec<String> = h
                     .lines
@@ -1299,18 +1352,18 @@ pub fn check(source: &Path, store: &Path, n: usize, seed: u64) -> io::Result<Che
                         String::from_utf8_lossy(&buf).into_owned()
                     })
                     .collect();
-                (lines, h.error)
+                lines
             });
-            let g = g.map(|h| (h.lines, h.error));
-            rep.records += g.as_ref().map_or(0, |h| h.0.len() as u64);
+            let g = g.map(|h| h.lines);
+            rep.records += g.as_ref().map_or(0, |h| h.len() as u64);
             if w != g {
                 rep.mismatches += 1;
                 if rep.examples.len() < 5 {
                     rep.examples.push(format!(
                         "{}:{a}-{b}: tabix {:?}, store {:?}",
                         e.name,
-                        w.map(|h| h.0.len()),
-                        g.map(|h| h.0.len())
+                        w.map(|h| h.len()),
+                        g.map(|h| h.len())
                     ));
                 }
             }

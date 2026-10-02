@@ -100,6 +100,19 @@ fn a_store_without_a_field_a_lookup_reads_is_refused() {
 }
 
 #[test]
+fn no_records_needs_a_source_that_returns_none() {
+    // a readable file: queries return records, so a store without them is refused
+    let dir = scratch("norecords");
+    let opts = BuildOptions {
+        no_records: true,
+        ..BuildOptions::default()
+    };
+    let e = build(&data().join("cv.vcf.gz"), &dir.join("cv"), &opts).unwrap_err();
+    assert!(e.to_string().contains("queries can return records"), "{e}");
+    assert!(!dir.join("cv").exists());
+}
+
+#[test]
 fn an_unfinished_store_is_refused() {
     let dir = scratch("unfinished");
     let e = Source::open(&dir).err().expect("refused");

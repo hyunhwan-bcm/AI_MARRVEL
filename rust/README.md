@@ -1,12 +1,23 @@
-# AIM Rust port
+# AIM Rust port: developer guide
 
 Rust implementation of AI-MARRVEL's Python/R stages, aiming for identical results to v1.1.3
 with less memory, fewer dependencies and more speed. Design and decisions: [DESIGN.md](DESIGN.md).
 
+This page is for developers and maintainers: building and testing `aim`, what the Rust steps
+replace in the pipeline, and how the published data folder and its lookup stores are made.
+**To run AI-MARRVEL, follow the [root README](../README.md)**: it covers the data download, the
+software setup and the run command.
+
+## Build and test
+
 ```bash
 cd rust
+cargo build --release                    # rust/target/release/aim
 cargo test --release                     # unit tests (what CI runs)
 ```
+
+CI (`.github/workflows/rust.yml`, Linux and macOS) also runs `cargo fmt --all --check` and
+`cargo clippy --all-targets --release -- -D warnings`.
 
 Golden tests compare against the pipeline and need the production models exported locally
 (no data dependencies are committed). With the baseline's pixi environment (`native/README.md`):
@@ -16,7 +27,7 @@ pixi run -e py python3.8 rust/tools/export_models.py <data>/model_inputs rust/mo
 cd rust && cargo test --release -- --include-ignored
 ```
 
-## Running the pipeline with the Rust steps
+## What the Rust steps replace
 
 `--rust true` swaps FILTER_PROBAND (`bcftools isec` with gnomAD's blacklists), PHRANK_SCORING, HPO_SIM, ANNOTATE_BY_MODULES, JOIN_PHRANK, ANNOTATE_TIER, MERGE_SCORES_BY_CHROMOSOME and PREDICTION for
 the `aim` binary, and moves ANNOTATE_BY_VEP's `--custom` and plugin lookups (gnomAD,
@@ -24,20 +35,46 @@ ClinVar, HGMD, REVEL, SpliceAI, CADD, dbNSFP) from VEP to `aim vep-annotate`; VE
 the rows and consequences (default off; the other steps are unchanged). With `--rust_vep true`
 as well, ANNOTATE_BY_VEP runs `aim vep` instead of VEP: rows, consequences, HGVS, known
 variants and regulatory rows from the VEP cache alone (VEP's SIFT, PolyPhen and DOMAINS columns,
-which AIM does not read, stay empty; input it does not support falls back to VEP):
+which AIM does not read, stay empty; input it does not support falls back to VEP).
+
+On the 1,450-variant ClinVar sample every output matches the Python/R run (rows as sets:
+the merged row order follows Nextflow's chromosome completion order in both versions).
+
+## Running from the full v1.1.3 bucket
+
+Users run with the published data folder (below and the root README), which already holds what
+`aim` reads. To run the Rust steps from the original bucket instead, export those files yourself:
 
 ```bash
 cargo build --release                    # rust/target/release/aim
 pixi run -e py python3.8 rust/tools/export_refs.py <data> rust/refs
 pixi run -e r Rscript rust/tools/export_genemap.R <data> rust/refs   # genemap2 RDS -> TSV
+pixi run -e py python3.8 rust/tools/export_models.py <data>/model_inputs rust/models
 nextflow run main.nf ... --rust true --aim_bin $PWD/rust/target/release/aim \
     --rust_refs $PWD/rust/refs --rust_models $PWD/rust/models
 ```
 
-On the 1,450-variant ClinVar sample every output matches the Python/R run (rows as sets:
-the merged row order follows Nextflow's chromosome completion order in both versions).
+## The published data folder
 
-### Lookup store (smaller CADD, SpliceAI and dbNSFP; all lookup VCFs but HGMD's)
+`aim-rust-data-v1` (download, layout and terms: the root README and the folder's own
+`README.md`) holds only what the pipeline reads with `--rust true --rust_vep true --vep_store`.
+It is put together from:
+
+| Folder                                                                                                                                     | Source                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `annotate/`, `bcf_annotate/`, `filter_exonic/`, `merge_expand/`, `model_inputs/`, `omim_annotate/`, `phrank/`, `predict_new/`, `var_tier/` | `s3://aim-data-dependencies-2.4-public`, unchanged                                               |
+| `omim_annotate/<build>/genemap2_pheno.tsv`                                                                                                 | `rust/tools/export_genemap.R`                                                                    |
+| `mod5_diffusion/`                                                                                                                          | `rust/tools/export_refs.py` (`net.csr`, `genes.txt`, `manifest.json`; not the bucket's matrices) |
+| `models/`                                                                                                                                  | `rust/tools/export_models.py`                                                                    |
+| `vep/<build>/`                                                                                                                             | the bucket's `vep/<build>/`: that build's VEP 104 cache, `Plugins/`, the HGMD placeholder, REVEL |
+| `store/<build>/`                                                                                                                           | the lookup stores, built as below                                                                |
+
+So one folder serves as `--ref_dir` and `--rust_refs`, with `--vep_store <folder>/store/<build>`
+and `--rust_models <folder>/models`. It cannot run the original pipeline: it has neither the
+original lookup files nor the diffusion matrices. `MD5SUMS` lists every file but itself, with
+paths relative to the folder.
+
+## Lookup store (smaller CADD, SpliceAI and dbNSFP; all lookup VCFs but HGMD's)
 
 `aim store build` copies a tabix lookup file into a store directory: Parquet, zstd, one file
 per chromosome, keeping only the fields AIM reads if asked. `aim vep` and `aim vep-annotate`
@@ -100,7 +137,9 @@ SpliceAI_pred, dbNSFP's other columns) and has a `## AIM_VEP_COLUMNS=` line with
 VEP writes, which `aim features` needs to type the table as pandas does (rust/DESIGN.md). The
 features and predictions are the same as without the store.
 
-| Crate      | Contents                                                                                                                                                                                                                                    |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `aim-core` | XGBoost `binary:logistic` evaluation (bit-identical to xgboost 2.1.4) and approximate SHAP (bit-identical to the osx-arm64 wheel; the x86-64 Linux wheel used in production differs by a few float32 ulps), percentile confidence, rankings |
-| `aim-cli`  | `aim` binary: `phrank`, `hpo-sim`, `vep-annotate`, `features`, `join-phrank`, `tier`, `merge`, `predict` (one subcommand per Nextflow process)                                                                                              |
+## Crates
+
+| Crate      | Contents                                                                                                                                                                                                                                                                                                                                                               |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aim-core` | XGBoost `binary:logistic` evaluation (bit-identical to xgboost 2.1.4) and approximate SHAP (bit-identical to the osx-arm64 wheel; the x86-64 Linux wheel used in production differs by a few float32 ulps), percentile confidence, rankings; the ports of the Python/R steps; VEP 104 from its cache (`vep_*.rs`); the lookup store; tabix reading; the blacklist step |
+| `aim-cli`  | `aim` binary: `phrank`, `hpo-sim`, `vep`, `vep-annotate`, `blacklist`, `features`, `join-phrank`, `tier`, `merge`, `predict` (one subcommand per Nextflow process), plus `store build`, `store check` and `tabix` for the lookup stores                                                                                                                                |

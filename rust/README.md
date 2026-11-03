@@ -3,6 +3,53 @@
 Rust implementation of AI-MARRVEL's Python/R stages, aiming for identical results to v1.1.3
 with less memory, fewer dependencies and more speed. Design and decisions: [DESIGN.md](DESIGN.md).
 
+## Data: download one folder, pass its path
+
+Everything the Rust pipeline reads, for hg38 and hg19, is one folder, `aim-rust-data-v1`
+(116.8 GiB; about 62 GiB for hg38 alone, 55 GiB for hg19 alone). It is in the public AWS bucket
+`s3://aim-rust-data-store-v1` (region `us-east-2`); no login is needed. Put it on any local disk
+with enough space, for example under `/data`:
+
+```bash
+cd /data
+aws s3 sync s3://aim-rust-data-store-v1/ aim-rust-data-v1/ --region us-east-2 --no-sign-request
+# or: rclone copy ":s3,provider=AWS,region=us-east-2:aim-rust-data-store-v1" aim-rust-data-v1 -P
+cd aim-rust-data-v1
+md5sum -c --quiet MD5SUMS                 # Linux; on macOS: rclone checksum md5 MD5SUMS . --one-way
+```
+
+For one build only, leave the other out: for hg38, add `--exclude 'vep/hg19/*' --exclude
+'store/hg19/*'` to `aws s3 sync` (rclone: `'vep/hg19/**'` and `'store/hg19/**'`). The folder's
+own `README.md` lists its layout and its sources' terms: CADD, SpliceAI, dbNSFP (academic) and
+REVEL are free for non-commercial use only.
+
+Then build `aim` and give the pipeline the folder's absolute path. The tools come from the pixi
+environments (`native/README.md`):
+
+```bash
+(cd rust && cargo build --release)       # rust/target/release/aim
+D=/data/aim-rust-data-v1
+NXF_VER=24.10.5 nextflow -c native/native.config run main.nf \
+    --ref_dir $D --ref_ver hg38 --input_vcf /path/to/sample.vcf.gz --input_hpo /path/to/sample.hpo.txt \
+    --outdir out --run_id sample \
+    --rust true --rust_vep true --aim_bin $PWD/rust/target/release/aim \
+    --vep_store $D/store/hg38 --rust_refs $D --rust_models $D/models
+```
+
+| Flag                           | Points at                                                         |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `--ref_dir $D`                 | the folder                                                        |
+| `--vep_store $D/store/<build>` | the build's lookup stores (an absolute path)                      |
+| `--rust_refs $D`               | the folder again: `aim` reads the gene network and tables from it |
+| `--rust_models $D/models`      | the four exported models                                          |
+
+For hg19, use `--ref_ver hg19 --vep_store $D/store/hg19`. On the ClinVar sample, both builds
+give the same scores and predictions from this folder alone as from the full bucket. The folder
+cannot run v1.1.3's Python/R/VEP path, which needs the 519 GiB
+`s3://aim-data-dependencies-2.4-public` bucket.
+
+## Tests
+
 ```bash
 cd rust
 cargo test --release                     # unit tests (what CI runs)
@@ -24,12 +71,16 @@ ClinVar, HGMD, REVEL, SpliceAI, CADD, dbNSFP) from VEP to `aim vep-annotate`; VE
 the rows and consequences (default off; the other steps are unchanged). With `--rust_vep true`
 as well, ANNOTATE_BY_VEP runs `aim vep` instead of VEP: rows, consequences, HGVS, known
 variants and regulatory rows from the VEP cache alone (VEP's SIFT, PolyPhen and DOMAINS columns,
-which AIM does not read, stay empty; input it does not support falls back to VEP):
+which AIM does not read, stay empty; input it does not support falls back to VEP).
+
+`aim-rust-data-v1` (above) already holds what `aim` reads. To run from the full v1.1.3 bucket
+instead, export the gene tables and models from it yourself:
 
 ```bash
 cargo build --release                    # rust/target/release/aim
 pixi run -e py python3.8 rust/tools/export_refs.py <data> rust/refs
 pixi run -e r Rscript rust/tools/export_genemap.R <data> rust/refs   # genemap2 RDS -> TSV
+pixi run -e py python3.8 rust/tools/export_models.py <data>/model_inputs rust/models
 nextflow run main.nf ... --rust true --aim_bin $PWD/rust/target/release/aim \
     --rust_refs $PWD/rust/refs --rust_models $PWD/rust/models
 ```
